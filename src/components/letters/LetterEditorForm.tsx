@@ -261,7 +261,7 @@ export function LetterEditorForm({ letter, onChange }: Props) {
             <p className="text-[10px] text-muted-foreground">
               {letter.showLetterTitle
                 ? "يظهر العنوان بالمنتصف والشعار في الطرف"
-                : "مُخفى — يتوسّط شعار الوكالة منتصف الترويسة تلقائياً"}
+                : "مُخفى — يتوسّط شعار T.A Advertising Solution منتصف الترويسة تلقائياً"}
             </p>
           </div>
           <Switch

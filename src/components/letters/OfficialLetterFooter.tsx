@@ -40,7 +40,7 @@ export const OfficialLetterFooter: React.FC<Props> = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 190px 1fr",
+          gridTemplateColumns: "1fr 220px 1fr",
           alignItems: "center",
           gap: "10px",
           paddingBottom: "14px",
@@ -80,7 +80,7 @@ export const OfficialLetterFooter: React.FC<Props> = ({
         {/* 2. الختم الرسمي مسنتر في المنتصف تماماً ومحاذي للبريد الإلكتروني أسفله */}
         <div
           style={{
-            minHeight: "120px",
+            minHeight: "136px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -91,8 +91,8 @@ export const OfficialLetterFooter: React.FC<Props> = ({
               src={TA_STAMP_BASE64}
               alt="T.A Official Stamp"
               style={{
-                width: "185px",
-                maxHeight: "138px",
+                width: "215px",
+                maxHeight: "160px",
                 height: "auto",
                 opacity: 0.92,
                 objectFit: "contain",
@@ -147,38 +147,46 @@ export const OfficialLetterFooter: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* شريط التواصل الرسمي المتماثل (الموقع يمين — الإيميل بالمنتصف تحت الختم تماماً — الهاتف يسار) */}
+      {/* شريط التواصل الرسمي المتماثل (الموقع يمين — الإيميل بالمنتصف تحت الختم تماماً — الهاتف أقصى اليسار) */}
       <div
         style={{
           borderTop: "2px solid #0D4A39",
           paddingTop: "9px",
           display: "grid",
-          gridTemplateColumns: "1fr auto 1fr",
+          gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
           alignItems: "center",
-          gap: "10px",
+          gap: "16px",
           fontSize: "12px",
           fontWeight: 800,
           color: "#0f172a",
           lineHeight: 1.4,
         }}
       >
-        <span style={{ fontSize: "12px", fontWeight: 800, textAlign: "start" }}>
+        <span style={{ fontSize: "12px", fontWeight: 800, textAlign: isRtl ? "right" : "left" }}>
           {companyAddress}
         </span>
-        <bdi dir="ltr" style={{ fontSize: "12px", fontWeight: 800, textAlign: "center" }}>
-          {email}
-        </bdi>
-        <bdi
-          dir="ltr"
+        <div style={{ textAlign: "center" }}>
+          <bdi dir="ltr" style={{ fontSize: "12px", fontWeight: 800 }}>
+            {email}
+          </bdi>
+        </div>
+        <div
           style={{
-            fontSize: "12px",
-            fontWeight: 800,
-            textAlign: "end",
-            fontVariantNumeric: "tabular-nums",
+            textAlign: isRtl ? "left" : "right",
+            whiteSpace: "nowrap",
           }}
         >
-          {phone}
-        </bdi>
+          <bdi
+            dir="ltr"
+            style={{
+              fontSize: "11.5px",
+              fontWeight: 800,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {phone}
+          </bdi>
+        </div>
       </div>
     </div>
   );

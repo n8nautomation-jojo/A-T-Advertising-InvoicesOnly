@@ -34,19 +34,19 @@ export const RECIPIENT_HONORIFIC_OPTIONS_EN = [
   "To Whom It May Concern",
 ] as const;
 
-export const DEFAULT_SUBJECT_AR = "تعاون ومراسلة رسمية — وكالة T.A Advertising Solution";
-export const DEFAULT_SUBJECT_EN = "Official Corporate Correspondence — T.A Advertising Solution";
+export const DEFAULT_SUBJECT_AR = "طلب سداد دفعة مقدمة للبدء في التنفيذ";
+export const DEFAULT_SUBJECT_EN = "Request for Advance Payment to Commence Execution";
 
 export const DEFAULT_BODY_AR = [
-  "تهديكم وكالة T.A Advertising Solution أطيب التحيات وأصدق الأمنيات بدوام التوفيق والنجاح في أعمالكم.",
-  "بالإشارة إلى الموضوع أعلاه، نود إفادتكم بالتفاصيل التالية: [اكتب التفاصيل المهمة هنا، مثل رقم الفاتورة أو نطاق العمل أو الطلب المطلوب]، وذلك وفقاً للاتفاق المعتمد بين الطرفين وبأعلى معايير الجودة والالتزام.",
-  "نثمن عالياً ثقتكم وتعاونكم الدائم معنا، ونتطلع إلى استمرار الشراكة المثمرة بين مؤسستينا.",
+  "تهديكم T.A Advertising Solution أطيب التحيات، وتثمّن عالياً ثقتكم وتعاونكم المستمر معنا.",
+  "بالإشارة إلى الفاتورة / عرض السعر المعتمد رقم [رقم الفاتورة] وتفاصيل الأعمال المتفق عليها، نرجو من سيادتكم التكرم بسداد الدفعة المقدمة بنسبة [النسبة %] من إجمالي قيمة الفاتورة والبالغة [المبلغ]، وذلك ليتسنى لفريقنا الفني الجدولة والبدء الفوري في إجراءات التنفيذ والإنتاج وفق أعلى معايير الجودة والالتزام بالجدول الزمني المحدد.",
+  "نشكر لكم حسن تعاونكم وسرعة استجابتكم، ونسعد دائماً بخدمتكم وتقديم أفضل الحلول الإعلانية المتكاملة.",
 ].join("\n\n");
 
 export const DEFAULT_BODY_EN = [
-  "T.A Advertising Solution extends its warmest greetings and sincere wishes for your continued success and prosperity.",
-  "With reference to the subject mentioned above, we would like to inform you of the following details: [Enter the key details here, such as invoice number, scope of work, or formal request], in accordance with our agreed terms and highest quality standards.",
-  "We highly value your continued trust and cooperation, and we look forward to a fruitful ongoing partnership between our organizations.",
+  "T.A Advertising Solution extends its warmest greetings and sincerely appreciates your valued trust and continued cooperation.",
+  "With reference to the approved Invoice / Quotation No. [Invoice No.] and the agreed scope of work, we kindly request settlement of the advance payment of [Percentage %] of the total invoice value amounting to [Amount], enabling our technical team to schedule and immediately commence execution and production in accordance with the agreed timeline and highest quality standards.",
+  "We thank you for your kind cooperation and prompt response, and we remain committed to delivering excellence in all your advertising solutions.",
 ].join("\n\n");
 
 export function createOfficialLetter(

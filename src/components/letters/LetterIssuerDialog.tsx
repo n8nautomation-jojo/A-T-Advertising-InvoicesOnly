@@ -168,7 +168,7 @@ export function LetterIssuerDialog({ open, onOpenChange, initialRecipientName }:
                   إصدار خطاب رسمي (ورقة مروّسة A4)
                 </DialogTitle>
                 <p className="hidden sm:block text-[11px] font-medium text-muted-foreground">
-                  مراسلات وكالة T.A Advertising Solution الرسمية بالختم والتوقيع المعتمد
+                  مراسلات T.A Advertising Solution الرسمية بالختم والتوقيع المعتمد
                 </p>
               </div>
             </div>

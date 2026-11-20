@@ -103,8 +103,8 @@ export const OfficialLetterDocument = React.forwardRef<HTMLDivElement, Props>(
             src={TA_WATERMARK_BASE64}
             alt=""
             style={{
-              width: "390px",
-              maxWidth: "70%",
+              width: "465px",
+              maxWidth: "82%",
               height: "auto",
               opacity: 0.08,
               objectFit: "contain",

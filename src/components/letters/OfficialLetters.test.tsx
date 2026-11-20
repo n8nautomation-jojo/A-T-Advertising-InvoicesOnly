@@ -34,9 +34,10 @@ describe("Official Corporate Letters — Unified Bilingual Letterhead", () => {
 
     expect(sheet!.textContent).not.toContain("خطاب رسمي");
     expect(sheet!.textContent).not.toContain("OFFICIAL CORRESPONDENCE");
-    expect(sheet!.textContent).not.toContain("عن وكالة T.A Advertising Solution");
+    expect(sheet!.textContent).not.toContain("وكالة");
     expect(sheet!.textContent).not.toContain("التوقيع المعتمد");
 
+    expect(sheet!.textContent).toContain("طلب سداد دفعة مقدمة للبدء في التنفيذ");
     expect(sheet!.textContent).toContain("شركة زادنا للمواد الغذائية");
     expect(sheet!.textContent).toContain("الموضوع:");
     expect(sheet!.textContent).toContain("طارق عثمان علي");
@@ -44,7 +45,11 @@ describe("Official Corporate Letters — Unified Bilingual Letterhead", () => {
 
     const stampImg = sheet!.querySelector<HTMLImageElement>('img[alt="T.A Official Stamp"]');
     expect(stampImg).not.toBeNull();
-    expect(stampImg!.style.width).toBe("185px");
+    expect(stampImg!.style.width).toBe("215px");
+
+    const watermarkImg = sheet!.querySelector<HTMLImageElement>('div[aria-hidden="true"] img');
+    expect(watermarkImg).not.toBeNull();
+    expect(watermarkImg!.style.width).toBe("465px");
 
     const qrImg = sheet!.querySelector<HTMLImageElement>('img[alt="QR Code"]');
     expect(qrImg).not.toBeNull();
