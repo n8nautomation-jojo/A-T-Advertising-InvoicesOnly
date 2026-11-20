@@ -1,20 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  BACKUP_ARCHIVE_FORMAT_VERSION_V2,
   BACKUP_ARCHIVE_PREFIX_LEN,
+  BACKUP_ARCHIVE_V2_PREFIX_LEN,
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
   BACKUP_FORMAT_ID,
   BACKUP_GCM_TAG_LEN,
   type BackupManifest,
 } from "@/lib/backup/types";
-import { ArchiveFormatError, encodeArchive, encodePayloadEnvelope, openArchive, parseArchive } from "@/lib/backup/codec";
+import {
+  ArchiveFormatError,
+  encodeArchive,
+  encodeArchiveV2,
+  encodePayloadEnvelope,
+  openArchive,
+  parseArchive,
+  parseArchiveV2,
+} from "@/lib/backup/codec";
 import {
   base64ToBytes,
   bytesToBase64,
   deriveKeyId,
+  formatRecoveryKey,
   generateKeyBase64,
   openPayload,
+  parseRecoveryKey,
   sha256Bytes,
   sha256Hex,
   utf8Encode,
@@ -113,6 +125,34 @@ describe("Backup crypto primitives", () => {
     const tampered = new Uint8Array(sealed);
     tampered[tampered.length - 1] ^= 0x01;
     expect(await openPayload(tampered, new Uint8Array(key))).toBeNull();
+  });
+
+  it("Recovery Key formats and parses a 256-bit key with checksum verification", async () => {
+    const rawKey = new Uint8Array(randomBytes(32));
+    const keyIdBefore = await deriveKeyId(rawKey);
+    const formatted = await formatRecoveryKey(rawKey);
+
+    expect(formatted).toMatch(/^TAKEY-([0-9A-F]{4}-){16}[0-9A-F]{4}$/);
+
+    // Exact round-trip
+    const parsed = await parseRecoveryKey(formatted);
+    expect(Buffer.from(parsed).toString("hex")).toBe(Buffer.from(rawKey).toString("hex"));
+    expect(await deriveKeyId(parsed)).toBe(keyIdBefore);
+
+    // Tolerates lowercase, whitespace, and stripped prefix/dashes
+    const loose = "  " + formatted.toLowerCase().replace(/^takey-/, "").replace(/-/g, " ") + "  ";
+    const parsedLoose = await parseRecoveryKey(loose);
+    expect(Buffer.from(parsedLoose).toString("hex")).toBe(Buffer.from(rawKey).toString("hex"));
+
+    // Rejects a single-character typo via SHA-256 checksum
+    const lastChar = formatted[formatted.length - 1];
+    const mutatedLast = lastChar === "0" ? "1" : "0";
+    const typo = formatted.slice(0, -1) + mutatedLast;
+    await expect(parseRecoveryKey(typo)).rejects.toThrow(/فشل التحقق/);
+
+    // Rejects truncated or invalid length codes
+    await expect(parseRecoveryKey("TAKEY-1234-5678")).rejects.toThrow(/غير صالحة/);
+    await expect(formatRecoveryKey(new Uint8Array(16))).rejects.toThrow(/32/);
   });
 });
 
@@ -218,3 +258,86 @@ describe("Archive container (.tabk)", () => {
     expect(name).toMatch(/^ta-backup-.*\.tabk$/);
   });
 });
+
+describe("Archive v2 container (binary + GZIP + AES-256-GCM AAD)", () => {
+  it("round-trips a compressed unencrypted v2 archive and shrinks repetitive SQLite pages", async () => {
+    const dbBytes = utf8Encode("SQLite format 3\0" + "INVOICE-ROW-DATA-".repeat(400));
+    const manifest = manifestFor({
+      sha256: await sha256Hex(dbBytes),
+      sizeBytes: dbBytes.length,
+      totalBusinessRecords: 12,
+    });
+    const archive = await encodeArchiveV2(manifest, dbBytes, { compress: true });
+    const parsed = parseArchiveV2(archive);
+    expect(parsed.archiveVersion).toBe(BACKUP_ARCHIVE_FORMAT_VERSION_V2);
+    expect(parsed.sealed).toBe(false);
+    expect(parsed.compressed).toBe(true);
+    expect(parsed.totalLength).toBe(
+      BACKUP_ARCHIVE_V2_PREFIX_LEN + parsed.keyId.length + parsed.headerBlock.length + parsed.dbBlock.length
+    );
+    expect(parsed.dbBlock.length).toBeLessThan(dbBytes.length / 4);
+
+    const opened = await openArchive(archive);
+    expect(opened.manifest.backupId).toBe(manifest.backupId);
+    expect(opened.manifest.totalBusinessRecords).toBe(12);
+    expect(Buffer.from(opened.database).toString("hex")).toBe(Buffer.from(dbBytes).toString("hex"));
+  });
+
+  it("round-trips an uncompressed v2 archive", async () => {
+    const dbBytes = new Uint8Array(randomBytes(2048));
+    const manifest = manifestFor({ sha256: await sha256Hex(dbBytes), sizeBytes: dbBytes.length });
+    const archive = await encodeArchiveV2(manifest, dbBytes, { compress: false });
+    const parsed = parseArchive(archive);
+    expect(parsed.archiveVersion).toBe(BACKUP_ARCHIVE_FORMAT_VERSION_V2);
+    expect(parsed.compressed).toBe(false);
+    expect(parsed.sealed).toBe(false);
+
+    const opened = await openArchive(archive);
+    expect(Buffer.from(opened.database).toString("hex")).toBe(Buffer.from(dbBytes).toString("hex"));
+  });
+
+  it("seals v2 header + dbBlock with AAD binding (rejects wrong key, missing key, and header swap)", async () => {
+    const key = new Uint8Array(randomBytes(32));
+    const keyId = await deriveKeyId(key);
+    const dbA = utf8Encode("SQLite format 3\0" + "SECRET-CLIENT-A-".repeat(100));
+    const dbB = utf8Encode("SQLite format 3\0" + "SECRET-CLIENT-B-".repeat(100));
+    const manifestA = manifestFor({ backupId: "bk-aaaa-01", encrypted: true, keyId, sha256: await sha256Hex(dbA), sizeBytes: dbA.length });
+    const manifestB = manifestFor({ backupId: "bk-bbbb-02", encrypted: true, keyId, sha256: await sha256Hex(dbB), sizeBytes: dbB.length });
+
+    const archiveA = await encodeArchiveV2(manifestA, dbA, { rawKey: key, keyId, compress: true });
+    const archiveB = await encodeArchiveV2(manifestB, dbB, { rawKey: key, keyId, compress: true });
+
+    // No plaintext leakage in v2 sealed bytes
+    expect(Buffer.from(archiveA).toString("utf8")).not.toContain("SECRET-CLIENT-A");
+    expect(Buffer.from(archiveA).toString("utf8")).not.toContain("bk-aaaa-01");
+
+    // Missing key & wrong key rejected
+    await expect(openArchive(archiveA)).rejects.toThrow("ENCRYPTED_NEEDS_KEY");
+    await expect(openArchive(archiveA, new Uint8Array(randomBytes(32)))).rejects.toThrow("BAD_SEAL");
+
+    // Valid open succeeds
+    const opened = await openArchive(archiveA, key);
+    expect(opened.manifest.backupId).toBe("bk-aaaa-01");
+    expect(Buffer.from(opened.database).toString("hex")).toBe(Buffer.from(dbA).toString("hex"));
+
+    // AAD binding check: swapping headerBlock from archiveB into archiveA (same key!) must fail BAD_SEAL
+    const parsedA = parseArchiveV2(archiveA);
+    const parsedB = parseArchiveV2(archiveB);
+    const swapped = new Uint8Array(
+      BACKUP_ARCHIVE_V2_PREFIX_LEN + parsedA.keyId.length + parsedB.headerBlock.length + parsedA.dbBlock.length
+    );
+    const prefix = new Uint8Array(archiveA.subarray(0, BACKUP_ARCHIVE_V2_PREFIX_LEN));
+    new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength).setUint32(8, parsedB.headerBlock.length, false);
+    let off = 0;
+    swapped.set(prefix, off);
+    off += prefix.length;
+    swapped.set(utf8Encode(parsedA.keyId), off);
+    off += parsedA.keyId.length;
+    swapped.set(parsedB.headerBlock, off);
+    off += parsedB.headerBlock.length;
+    swapped.set(parsedA.dbBlock, off);
+
+    await expect(openArchive(swapped, key)).rejects.toThrow("BAD_SEAL");
+  });
+});
+

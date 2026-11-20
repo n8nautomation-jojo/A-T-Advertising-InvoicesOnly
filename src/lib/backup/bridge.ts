@@ -35,12 +35,16 @@ interface NativePluginApi {
   restoreBackup(options: { fileName: string; mode: RestoreMode }): Promise<RestoreResult>;
   discoverBackups(): Promise<{ ok: boolean; status?: NativeStatus; currentInvoiceCount?: number; pendingSchemaUpgrade?: boolean }>;
   exportArchive(options: { fileName: string }): Promise<{ ok: boolean; base64?: string; errorCode?: string; message?: string }>;
-  importArchive(options: { base64: string; fileName: string }): Promise<{ ok: boolean; fileName?: string; manifest?: BackupManifest; errorCode?: string; message?: string }>;
-  getDbCounts(): Promise<{ ok: boolean; counts: Record<string, number>; invoiceCount: number; schemaVersion: number }>;
+  importArchive(options: { base64: string; fileName: string }): Promise<{ ok: boolean; fileName?: string; manifest?: BackupManifest; needsRecoveryKey?: boolean; keyId?: string; errorCode?: string; message?: string }>;
+  getDbCounts(): Promise<{ ok: boolean; counts: Record<string, number>; invoiceCount: number; totalBusinessRecords?: number; schemaVersion: number }>;
   saveSettings(options: Record<string, unknown>): Promise<{ ok: boolean }>;
   getEngineInfo(): Promise<{ ok: boolean; engineVersion: string; sdkInt: number; model: string; supported: boolean }>;
   setScheduledBackupEnabled(options: { enabled: boolean }): Promise<{ ok: boolean }>;
   getBackupRecords(): Promise<{ ok: boolean; backups: any[]; errorCode?: string; message?: string }>;
+  exportRecoveryKey(): Promise<{ ok: boolean; recoveryKey?: string; keyId?: string; errorCode?: string; message?: string }>;
+  importRecoveryKey(options: { recoveryKey: string }): Promise<{ ok: boolean; keyId?: string; errorCode?: string; message?: string }>;
+  getEncryptionInfo(): Promise<{ ok: boolean; hasKey: boolean; keyId: string; keystoreAvailable: boolean; keyCount: number }>;
+  preparePreUpdateBackup(options: { appVersion: string; targetSchema: number }): Promise<{ ok: boolean; skipped?: boolean; skipReason?: string; backupId?: string; fileName?: string; message?: string }>;
 }
 
 interface NativeStatus {
@@ -52,6 +56,11 @@ interface NativeStatus {
   protection?: string;
   encryptionAvailable?: boolean;
   engineVersion?: string;
+  lastBackupAt?: string | null;
+  lastBackupStatus?: string | null;
+  lastBackupMessage?: string | null;
+  hasEncryptionKey?: boolean;
+  encryptionKeyId?: string | null;
 }
 
 const nativePlugin = registerPlugin<NativePluginApi>("TaBackup");
@@ -131,6 +140,10 @@ const NATIVE_COMMANDS = [
   "getEngineInfo",
   "setScheduledBackupEnabled",
   "getBackupRecords",
+  "exportRecoveryKey",
+  "importRecoveryKey",
+  "getEncryptionInfo",
+  "preparePreUpdateBackup",
 ] as const;
 
 /**
@@ -171,6 +184,8 @@ export const backupBridge = {
     }
     const backups = Array.isArray(raw.backups) ? raw.backups.map(toBackupFileInfo) : [];
     const newestRaw = raw.newestVerified && raw.newestVerified !== null ? toBackupFileInfo(raw.newestVerified) : null;
+    const lastNativeStatus =
+      raw.lastBackupStatus === "ok" || raw.lastBackupStatus === "failed" ? raw.lastBackupStatus : "never";
     return {
       ok: true,
       status: {
@@ -184,6 +199,11 @@ export const backupBridge = {
         protectionReason: null,
         encryptionAvailable: Boolean(raw.encryptionAvailable),
         engineVersion: String(raw.engineVersion ?? ""),
+        lastNativeBackupAt: typeof raw.lastBackupAt === "string" && raw.lastBackupAt ? raw.lastBackupAt : null,
+        lastNativeBackupStatus: lastNativeStatus,
+        lastNativeBackupMessage: typeof raw.lastBackupMessage === "string" && raw.lastBackupMessage ? raw.lastBackupMessage : null,
+        hasEncryptionKey: Boolean(raw.hasEncryptionKey),
+        encryptionKeyId: typeof raw.encryptionKeyId === "string" ? raw.encryptionKeyId : "",
       },
     };
   },
@@ -261,11 +281,14 @@ export const backupBridge = {
     return callNative("exportArchive", { fileName });
   },
 
-  async importArchive(base64: string, fileName: string): Promise<{ ok: boolean; fileName?: string; manifest?: BackupManifest; errorCode?: string; message?: string }> {
+  async importArchive(
+    base64: string,
+    fileName: string
+  ): Promise<{ ok: boolean; fileName?: string; manifest?: BackupManifest; needsRecoveryKey?: boolean; keyId?: string; errorCode?: string; message?: string }> {
     return callNative("importArchive", { base64, fileName });
   },
 
-  async getDbCounts(): Promise<{ ok: boolean; counts: Record<string, number>; invoiceCount: number; schemaVersion: number }> {
+  async getDbCounts(): Promise<{ ok: boolean; counts: Record<string, number>; invoiceCount: number; totalBusinessRecords?: number; schemaVersion: number }> {
     return callNative("getDbCounts");
   },
 
@@ -282,6 +305,25 @@ export const backupBridge = {
 
   async setScheduledBackupEnabled(enabled: boolean): Promise<{ ok: boolean }> {
     return callNative("setScheduledBackupEnabled", { enabled });
+  },
+
+  async exportRecoveryKey(): Promise<{ ok: boolean; recoveryKey?: string; keyId?: string; errorCode?: string; message?: string }> {
+    return callNative("exportRecoveryKey");
+  },
+
+  async importRecoveryKey(recoveryKey: string): Promise<{ ok: boolean; keyId?: string; errorCode?: string; message?: string }> {
+    return callNative("importRecoveryKey", { recoveryKey });
+  },
+
+  async getEncryptionInfo(): Promise<{ ok: boolean; hasKey: boolean; keyId: string; keystoreAvailable: boolean; keyCount: number }> {
+    return callNative("getEncryptionInfo");
+  },
+
+  async preparePreUpdateBackup(
+    appVersion: string,
+    targetSchema: number
+  ): Promise<{ ok: boolean; skipped?: boolean; skipReason?: string; backupId?: string; fileName?: string; message?: string }> {
+    return callNative("preparePreUpdateBackup", { appVersion, targetSchema });
   },
 };
 

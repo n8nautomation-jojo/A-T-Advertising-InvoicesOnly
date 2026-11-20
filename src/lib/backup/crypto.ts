@@ -217,28 +217,48 @@ function getSecureRandomBytes(length: number): Uint8Array {
 }
 
 /**
- * Seals `plaintext` with AES-256-GCM under a random 96-bit IV.
+ * Seals `plaintext` with AES-256-GCM under a random 96-bit IV and optional AAD.
  * The output is iv(12) || ciphertext || tag(16).
  */
-export async function sealPayload(plaintext: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array> {
+export async function sealPayloadWithAad(
+  plaintext: Uint8Array,
+  rawKey: Uint8Array,
+  aad?: Uint8Array
+): Promise<Uint8Array> {
   const subtle = getSubtle();
   if (!subtle) throw new Error("ENCRYPTION_UNAVAILABLE");
   const key = await importAesKey(rawKey);
   const iv = getSecureRandomBytes(12);
+  const params: AesGcmParams = {
+    name: "AES-GCM",
+    iv: iv as unknown as BufferSource,
+    tagLength: 128,
+  };
+  if (aad && aad.length > 0) {
+    params.additionalData = aad as unknown as BufferSource;
+  }
 
-  const sealed = await subtle.encrypt(
-    { name: "AES-GCM", iv: iv as unknown as BufferSource, tagLength: 128 },
-    key,
-    plaintext as unknown as BufferSource
-  );
+  const sealed = await subtle.encrypt(params, key, plaintext as unknown as BufferSource);
   return concatBytes(iv, new Uint8Array(sealed));
 }
 
 /**
- * Opens an AES-256-GCM payload produced by {@link sealPayload}.
- * Returns null when authentication fails (wrong key or tampered bytes).
+ * Seals `plaintext` with AES-256-GCM under a random 96-bit IV.
+ * The output is iv(12) || ciphertext || tag(16).
  */
-export async function openPayload(sealed: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array | null> {
+export async function sealPayload(plaintext: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array> {
+  return sealPayloadWithAad(plaintext, rawKey);
+}
+
+/**
+ * Opens an AES-256-GCM payload produced by {@link sealPayloadWithAad}.
+ * Returns null when authentication fails (wrong key, wrong AAD, or tampered bytes).
+ */
+export async function openPayloadWithAad(
+  sealed: Uint8Array,
+  rawKey: Uint8Array,
+  aad?: Uint8Array
+): Promise<Uint8Array | null> {
   const subtle = getSubtle();
   if (!subtle) throw new Error("ENCRYPTION_UNAVAILABLE");
   if (sealed.length < 12 + 16) return null;
@@ -246,15 +266,73 @@ export async function openPayload(sealed: Uint8Array, rawKey: Uint8Array): Promi
     const key = await importAesKey(rawKey);
     const iv = sealed.subarray(0, 12);
     const body = sealed.subarray(12);
-    const opened = await subtle.decrypt(
-      { name: "AES-GCM", iv: iv as unknown as BufferSource, tagLength: 128 },
-      key,
-      body as unknown as BufferSource
-    );
+    const params: AesGcmParams = {
+      name: "AES-GCM",
+      iv: iv as unknown as BufferSource,
+      tagLength: 128,
+    };
+    if (aad && aad.length > 0) {
+      params.additionalData = aad as unknown as BufferSource;
+    }
+    const opened = await subtle.decrypt(params, key, body as unknown as BufferSource);
     return new Uint8Array(opened);
   } catch {
     return null;
   }
+}
+
+/**
+ * Opens an AES-256-GCM payload produced by {@link sealPayload}.
+ * Returns null when authentication fails (wrong key or tampered bytes).
+ */
+export async function openPayload(sealed: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array | null> {
+  return openPayloadWithAad(sealed, rawKey);
+}
+
+const RECOVERY_KEY_CHECKSUM_PREFIX = "ta-backup-recovery:";
+
+/**
+ * Formats a raw 256-bit key into a checksummed, human-printable recovery code:
+ * `TAKEY-XXXX-XXXX-...` (17 4-char uppercase hex groups = 32 key bytes + 2-byte SHA-256 checksum).
+ * Matches Android BackupArchive.formatRecoveryKey byte-for-byte.
+ */
+export async function formatRecoveryKey(rawKey: Uint8Array): Promise<string> {
+  if (!rawKey || rawKey.length !== 32) {
+    throw new Error("طول مفتاح التشفير غير صالح (يجب أن يكون 32 بايت).");
+  }
+  const digest = sha256Bytes(concatBytes(utf8Encode(RECOVERY_KEY_CHECKSUM_PREFIX), rawKey));
+  const payload = concatBytes(rawKey, digest.subarray(0, 2));
+  const hex = toHex(payload).toUpperCase();
+  const groups: string[] = [];
+  for (let i = 0; i < hex.length; i += 4) {
+    groups.push(hex.slice(i, i + 4));
+  }
+  return "TAKEY-" + groups.join("-");
+}
+
+/**
+ * Parses and checksum-verifies a `TAKEY-...` recovery key string back into 32 raw key bytes.
+ * Matches Android BackupArchive.parseRecoveryKey byte-for-byte.
+ */
+export async function parseRecoveryKey(code: string): Promise<Uint8Array> {
+  let clean = String(code ?? "").trim().replace(/[\s-]+/g, "");
+  if (/^TAKEY/i.test(clean)) {
+    clean = clean.slice(5);
+  }
+  if (clean.length !== 68 || !/^[0-9a-fA-F]{68}$/.test(clean)) {
+    throw new Error("صيغة مفتاح الاسترداد غير صالحة — تأكد من إدخال الرمز كاملاً بدون نقص.");
+  }
+  const decoded = new Uint8Array(34);
+  for (let i = 0; i < 34; i++) {
+    decoded[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  const rawKey = decoded.subarray(0, 32);
+  const checksum = decoded.subarray(32, 34);
+  const expected = sha256Bytes(concatBytes(utf8Encode(RECOVERY_KEY_CHECKSUM_PREFIX), rawKey)).subarray(0, 2);
+  if (!constantTimeEqual(checksum, expected)) {
+    throw new Error("مفتاح الاسترداد غير صحيح — فشل التحقق من رمز الفحص، تأكد من عدم وجود خطأ في الكتابة.");
+  }
+  return new Uint8Array(rawKey);
 }
 
 /**

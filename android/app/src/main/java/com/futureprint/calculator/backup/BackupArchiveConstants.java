@@ -11,6 +11,7 @@ final class BackupArchiveConstants {
     static final String DB_FILE_NAME = DB_NAME + "SQLite.db";
     static final String FORMAT_ID = "TA-BACKUP";
     static final int MANIFEST_VERSION = 1;
+    static final int ARCHIVE_FORMAT_VERSION_V2 = 2;
 
     private BackupArchiveConstants() {}
 

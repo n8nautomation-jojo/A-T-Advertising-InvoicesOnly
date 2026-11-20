@@ -14,6 +14,8 @@ import {
 import { SETTLEMENT_STATUS_LABELS, SETTLEMENT_STATUS_TONES } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
 import { ExpenseDialog } from "@/components/finance/ExpenseDialog";
+import { CurrencySelector } from "@/components/currency/CurrencySelector";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 
 /**
  * المصروفات (PRD §7.4، §7.5): تكاليف تنفيذ وإنتاج مباشرة ومصروفات تشغيلية،
@@ -21,28 +23,36 @@ import { ExpenseDialog } from "@/components/finance/ExpenseDialog";
  */
 export function ExpensesPage() {
   const [rows, setRows] = useState<ExpenseWithSettlement[]>([]);
+  const [currency, setCurrency] = useState<AppCurrency>(DEFAULT_CURRENCY);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [settleTarget, setSettleTarget] = useState<ExpenseWithSettlement | null>(null);
 
+  const currencyLabel =
+    currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await getExpensesWithSettlement());
+      setRows(await getExpensesWithSettlement(undefined, currency));
     } catch (err) {
       console.error("[ExpensesPage] load failed:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     void load();
-    const onReady = () => {
+    const onRefresh = () => {
       void load();
     };
-    window.addEventListener("native-storage-ready", onReady);
-    return () => window.removeEventListener("native-storage-ready", onReady);
+    window.addEventListener("native-storage-ready", onRefresh);
+    window.addEventListener("finance-changed", onRefresh);
+    return () => {
+      window.removeEventListener("native-storage-ready", onRefresh);
+      window.removeEventListener("finance-changed", onRefresh);
+    };
   }, [load]);
 
   const direct = rows.filter((row) => row.kind === "direct");
@@ -88,7 +98,13 @@ export function ExpensesPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <CurrencySelector
+                label="العملة:"
+                dropdownTitle="اختر عملة العرض"
+                value={currency}
+                onChange={setCurrency}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -96,7 +112,7 @@ export function ExpensesPage() {
                 onClick={() => void load()}
                 disabled={loading}
                 aria-label="تحديث"
-                className="h-9 w-9 rounded-xl p-0 text-muted-foreground"
+                className="h-8 w-8 rounded-xl p-0 text-muted-foreground"
               >
                 <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
               </Button>
@@ -113,9 +129,9 @@ export function ExpensesPage() {
 
           {/* 2. مؤشرات المصروفات */}
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-            <Metric label="تكاليف تنفيذ وإنتاج مباشرة" value={formatNumber(totalDirect)} tone="primary" />
-            <Metric label="مصروفات تشغيلية" value={formatNumber(totalOperating)} tone="muted" />
-            <Metric label="غير مسدَّد حتى الآن" value={formatNumber(unpaidTotal)} tone="warn" className="col-span-2 sm:col-span-1" />
+            <Metric label="تكاليف تنفيذ وإنتاج مباشرة" value={formatNumber(totalDirect)} currencyLabel={currencyLabel} tone="primary" />
+            <Metric label="مصروفات تشغيلية" value={formatNumber(totalOperating)} currencyLabel={currencyLabel} tone="muted" />
+            <Metric label="غير مسدَّد حتى الآن" value={formatNumber(unpaidTotal)} currencyLabel={currencyLabel} tone="warn" className="col-span-2 sm:col-span-1" />
           </div>
 
           {/* 3. التبويبات والقائمة */}
@@ -123,7 +139,7 @@ export function ExpensesPage() {
             {rows.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/70 bg-muted/20 p-8 text-center">
                 <Wallet className="h-8 w-8 text-muted-foreground" />
-                <p className="text-sm font-black text-foreground">لا توجد مصروفات مسجّلة بعد</p>
+                <p className="text-sm font-black text-foreground">لا توجد مصروفات مسجّلة بهذه العملة بعد</p>
                 <p className="text-xs leading-relaxed text-muted-foreground max-w-md">
                   التكلفة المباشرة تخص التنفيذ والإنتاج، والمصروف التشغيلي يخص تشغيل الشركة العام. تسجيل المصروف يثبت التكلفة ولا يعني دفعها إلا عند السداد.
                 </p>
@@ -157,71 +173,77 @@ export function ExpensesPage() {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                          {list.map((row) => (
-                            <div
-                              key={row.id}
-                              className="rounded-2xl border border-border/70 bg-card p-3.5 shadow-2xs flex flex-col justify-between gap-2.5 transition-all hover:border-primary/40"
-                            >
-                              <div className="flex items-start justify-between gap-2.5">
-                                <div className="min-w-0 flex-1 space-y-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="truncate text-sm font-black text-foreground">
-                                      {row.beneficiary || row.category || EXPENSE_KIND_LABELS[row.kind]}
-                                    </p>
-                                    <span
-                                      className={cn(
-                                        "rounded-full border px-2 py-0.5 text-[10px] font-bold shrink-0",
-                                        SETTLEMENT_STATUS_TONES[row.settlement.status]
+                          {list.map((row) => {
+                            const rowCurLabel =
+                              row.currency === "SDG"
+                                ? "ج.س"
+                                : SUPPORTED_CURRENCIES[row.currency]?.symbol ?? row.currency;
+                            return (
+                              <div
+                                key={row.id}
+                                className="rounded-2xl border border-border/70 bg-card p-3.5 shadow-2xs flex flex-col justify-between gap-2.5 transition-all hover:border-primary/40"
+                              >
+                                <div className="flex items-start justify-between gap-2.5">
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="truncate text-sm font-black text-foreground">
+                                        {row.beneficiary || row.category || EXPENSE_KIND_LABELS[row.kind]}
+                                      </p>
+                                      <span
+                                        className={cn(
+                                          "rounded-full border px-2 py-0.5 text-[10px] font-bold shrink-0",
+                                          SETTLEMENT_STATUS_TONES[row.settlement.status]
+                                        )}
+                                      >
+                                        {SETTLEMENT_STATUS_LABELS[row.settlement.status]}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground">
+                                      <span className="inline-flex items-center gap-1">
+                                        <Calendar className="h-3 w-3 text-primary/70" />
+                                        <bdi dir="ltr" className="font-mono">{row.expenseDate}</bdi>
+                                      </span>
+                                      {row.category && row.beneficiary && (
+                                        <span className="inline-flex items-center gap-1">
+                                          <Layers className="h-3 w-3 text-muted-foreground" />
+                                          <span>{row.category}</span>
+                                        </span>
                                       )}
-                                    >
-                                      {SETTLEMENT_STATUS_LABELS[row.settlement.status]}
-                                    </span>
+                                    </div>
                                   </div>
 
-                                  <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground">
-                                    <span className="inline-flex items-center gap-1">
-                                      <Calendar className="h-3 w-3 text-primary/70" />
-                                      <bdi dir="ltr" className="font-mono">{row.expenseDate}</bdi>
-                                    </span>
-                                    {row.category && row.beneficiary && (
-                                      <span className="inline-flex items-center gap-1">
-                                        <Layers className="h-3 w-3 text-muted-foreground" />
-                                        <span>{row.category}</span>
-                                      </span>
+                                  <div className="shrink-0 text-left">
+                                    <p className="font-mono text-sm font-black tabular-nums text-foreground">
+                                      {formatNumber(row.amount)}
+                                    </p>
+                                    <p className="text-[10px] text-muted-foreground">{rowCurLabel}</p>
+                                  </div>
+                                </div>
+
+                                {(row.settlement.outstanding > 0 || row.settlement.paid > 0) && (
+                                  <div className="flex items-center justify-between gap-2 border-t border-border/50 pt-2">
+                                    <div className="text-[10.5px] font-bold text-amber-600 dark:text-amber-400">
+                                      {row.settlement.paid > 0
+                                        ? `مسدَّد ${formatNumber(row.settlement.paid)} · متبقي ${formatNumber(row.settlement.outstanding)}`
+                                        : "بانتظار السداد النقدي"}
+                                    </div>
+                                    {row.settlement.outstanding > 0 && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={() => setSettleTarget(row)}
+                                        className="h-8 rounded-xl gap-1.5 text-[11px] font-black bg-primary hover:bg-primary/90 text-white"
+                                      >
+                                        <Receipt className="h-3.5 w-3.5" />
+                                        <span>سداد</span>
+                                      </Button>
                                     )}
                                   </div>
-                                </div>
-
-                                <div className="shrink-0 text-left">
-                                  <p className="font-mono text-sm font-black tabular-nums text-foreground">
-                                    {formatNumber(row.amount)}
-                                  </p>
-                                  <p className="text-[10px] text-muted-foreground">ج.س</p>
-                                </div>
+                                )}
                               </div>
-
-                              {(row.settlement.outstanding > 0 || row.settlement.paid > 0) && (
-                                <div className="flex items-center justify-between gap-2 border-t border-border/50 pt-2">
-                                  <div className="text-[10.5px] font-bold text-amber-600 dark:text-amber-400">
-                                    {row.settlement.paid > 0
-                                      ? `مسدَّد ${formatNumber(row.settlement.paid)} · متبقي ${formatNumber(row.settlement.outstanding)}`
-                                      : "بانتظار السداد النقدي"}
-                                  </div>
-                                  {row.settlement.outstanding > 0 && (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      onClick={() => setSettleTarget(row)}
-                                      className="h-8 rounded-xl gap-1.5 text-[11px] font-black bg-primary hover:bg-primary/90 text-white"
-                                    >
-                                      <Receipt className="h-3.5 w-3.5" />
-                                      <span>سداد</span>
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </TabsContent>
@@ -233,7 +255,7 @@ export function ExpensesPage() {
         </div>
       </main>
 
-      <ExpenseDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={() => void load()} />
+      <ExpenseDialog open={createOpen} onOpenChange={setCreateOpen} defaultCurrency={currency} onSaved={() => void load()} />
       <ExpenseDialog
         open={Boolean(settleTarget)}
         onOpenChange={(open) => !open && setSettleTarget(null)}
@@ -247,11 +269,13 @@ export function ExpensesPage() {
 function Metric({
   label,
   value,
+  currencyLabel = "ج.س",
   tone,
   className,
 }: {
   label: string;
   value: string;
+  currencyLabel?: string;
   tone: "primary" | "warn" | "muted";
   className?: string;
 }) {
@@ -267,7 +291,7 @@ function Metric({
     >
       <p className="text-[11px] font-bold text-muted-foreground">{label}</p>
       <p className="font-mono text-base sm:text-lg font-black tabular-nums text-foreground">
-        {value} <span className="text-[10px] font-sans font-normal text-muted-foreground">ج.س</span>
+        {value} <span className="text-[10px] font-sans font-normal text-muted-foreground">{currencyLabel}</span>
       </p>
     </div>
   );

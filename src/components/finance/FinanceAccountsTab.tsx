@@ -16,6 +16,7 @@ import {
   type AccountKind,
 } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import { CURRENCY_LIST, type AppCurrency } from "@/lib/currency/types";
 
 interface FinanceAccountsTabProps {
   accounts: AccountBalanceReport[];
@@ -23,6 +24,8 @@ interface FinanceAccountsTabProps {
   setNewAccountName: (v: string) => void;
   newAccountKind: AccountKind;
   setNewAccountKind: (v: AccountKind) => void;
+  newAccountCurrency: AppCurrency;
+  setNewAccountCurrency: (v: AppCurrency) => void;
   creatingAccount: boolean;
   onCreateAccount: () => void;
 }
@@ -33,6 +36,8 @@ export function FinanceAccountsTab({
   setNewAccountName,
   newAccountKind,
   setNewAccountKind,
+  newAccountCurrency,
+  setNewAccountCurrency,
   creatingAccount,
   onCreateAccount,
 }: FinanceAccountsTabProps) {
@@ -71,7 +76,7 @@ export function FinanceAccountsTab({
 
       <div className="surface-panel space-y-2.5">
         <p className="surface-panel-title">إضافة حساب مالي جديد</p>
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px_auto] gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_130px_130px_auto] gap-2">
           <Input
             value={newAccountName}
             onChange={(e) => setNewAccountName(e.target.value)}
@@ -93,6 +98,22 @@ export function FinanceAccountsTab({
               <SelectItem value="cash" className="text-xs font-bold">نقدي</SelectItem>
               <SelectItem value="bank" className="text-xs font-bold">بنكي</SelectItem>
               <SelectItem value="other" className="text-xs font-bold">أخرى</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            dir="rtl"
+            value={newAccountCurrency}
+            onValueChange={(v) => setNewAccountCurrency(v as AppCurrency)}
+          >
+            <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent dir="rtl">
+              {CURRENCY_LIST.map((cur) => (
+                <SelectItem key={cur.code} value={cur.code} className="text-xs font-bold">
+                  {cur.flag} {cur.code}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Button

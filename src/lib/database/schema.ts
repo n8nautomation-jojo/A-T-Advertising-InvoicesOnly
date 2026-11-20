@@ -9,9 +9,9 @@
 export const DB_NAME = "ta_invoicing_db";
 /**
  * الإصدار المنطقي للمخطط — يطابق آخر ترحيل في `migrations/index.ts`
- * (v6: نموذج الأعمال + الترقيم + التسويات + إدارة العملاء + المحاسبة متعددة العملات والفهارس).
+ * (v7: نموذج الأعمال + الترقيم + التسويات + إدارة العملاء + المحاسبة متعددة العملات والفهارس + الخطابات الرسمية official_letters).
  */
-export const DB_VERSION = 6;
+export const DB_VERSION = 7;
 
 /**
  * Complete DDL for version 1.
@@ -551,6 +551,41 @@ export const CREATE_SCHEMA_V6_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_fin_tx_currency ON financial_transactions(currency)`,
   `CREATE INDEX IF NOT EXISTS idx_expenses_currency ON expenses(currency)`,
   `CREATE INDEX IF NOT EXISTS idx_supplier_payments_currency ON supplier_payments(currency)`,
+];
+
+/**
+ * ═══════════════════════════════════════════════════════════════
+ * Schema v7 — Official Corporate Letters (`official_letters`)
+ * ═══════════════════════════════════════════════════════════════
+ * Purely additive: dedicated SQLite table for bilingual official letters,
+ * replacing the capped JSON blob previously stored in `settings`.
+ */
+export const CREATE_SCHEMA_V7: string[] = [
+  `CREATE TABLE IF NOT EXISTS official_letters (
+    id                  TEXT PRIMARY KEY NOT NULL,
+    reference           TEXT NOT NULL,
+    language            TEXT NOT NULL DEFAULT 'ar',
+    date                TEXT NOT NULL,
+    show_letter_title   INTEGER NOT NULL DEFAULT 0,
+    letter_title        TEXT NOT NULL DEFAULT '',
+    recipient_honorific TEXT NOT NULL DEFAULT '',
+    recipient_name      TEXT NOT NULL DEFAULT '',
+    recipient_title     TEXT,
+    salutation          TEXT NOT NULL DEFAULT '',
+    subject             TEXT NOT NULL DEFAULT '',
+    body                TEXT NOT NULL DEFAULT '',
+    closing_phrase      TEXT NOT NULL DEFAULT '',
+    signatory_name      TEXT NOT NULL DEFAULT '',
+    signatory_title     TEXT NOT NULL DEFAULT '',
+    include_signature   INTEGER NOT NULL DEFAULT 1,
+    include_stamp       INTEGER NOT NULL DEFAULT 1,
+    include_qr          INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_official_letters_date ON official_letters(date DESC, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_official_letters_reference ON official_letters(reference)`,
 ];
 
 /** Default account so recording a payment never blocks on setup (PRD §13.2). */

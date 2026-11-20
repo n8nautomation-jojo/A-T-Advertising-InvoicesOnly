@@ -1,16 +1,21 @@
 /**
  * ═══════════════════════════════════════════════════════════════
- * Official Letters Archive Store (SQLite Settings + Web Storage)
+ * Official Letters Archive Store (SQLite Table + Web Storage)
  * ═══════════════════════════════════════════════════════════════
- * Stores issued official letters cleanly in the existing SQLite
- * settings table (automatically backed up and restored) without
- * altering financial/invoice database tables.
+ * On native Android: persists directly to the dedicated `official_letters`
+ * SQLite table via `OfficialLetterRepository` with unlimited capacity.
+ * On Web/Test: falls back cleanly to browser `localStorage`.
  */
 
 import { useSyncExternalStore } from "react";
 import { Capacitor } from "@capacitor/core";
-import { getSetting, setSetting } from "@/lib/repositories/SettingsRepository";
-import { getStoredSync, setMemoryCacheString } from "@/lib/sqliteStorage";
+import { getSetting } from "@/lib/repositories/SettingsRepository";
+import {
+  getAllOfficialLetters,
+  upsertOfficialLetter as repoUpsertOfficialLetter,
+  deleteOfficialLetter as repoDeleteOfficialLetter,
+} from "@/lib/repositories/OfficialLetterRepository";
+import { getStoredJsonSync, setMemoryCacheJson } from "@/lib/sqliteStorage";
 import { getLocalIsoDate } from "@/lib/dateUtils";
 import type { OfficialLetter } from "./types";
 
@@ -46,26 +51,26 @@ function normalizeStoredLetter(item: Partial<OfficialLetter> & { id: string; sub
   };
 }
 
+function normalizeLettersArray(items: unknown): OfficialLetter[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter(
+      (item): item is Partial<OfficialLetter> & { id: string; subject: string } =>
+        Boolean(item && typeof item === "object" && typeof item.id === "string" && typeof item.subject === "string")
+    )
+    .map(normalizeStoredLetter);
+}
+
 function parseLettersJson(raw: string): OfficialLetter[] {
   if (!raw || !raw.trim()) return [];
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item): item is Partial<OfficialLetter> & { id: string; subject: string } =>
-          Boolean(item && typeof item === "object" && typeof item.id === "string" && typeof item.subject === "string")
-      )
-      .map(normalizeStoredLetter);
+    return normalizeLettersArray(JSON.parse(raw));
   } catch {
     return [];
   }
 }
 
-function readRawSync(): string {
-  if (Capacitor.isNativePlatform()) {
-    return getStoredSync(LETTERS_STORAGE_KEY, "[]") || "[]";
-  }
+function readWebRawSync(): string {
   try {
     if (typeof localStorage !== "undefined" && typeof localStorage.getItem === "function") {
       return localStorage.getItem(LETTERS_STORAGE_KEY) || "[]";
@@ -74,11 +79,7 @@ function readRawSync(): string {
   return "[]";
 }
 
-function writeRawSync(serialized: string): void {
-  if (Capacitor.isNativePlatform()) {
-    setMemoryCacheString(LETTERS_STORAGE_KEY, serialized);
-    return;
-  }
+function writeWebRawSync(serialized: string): void {
   try {
     if (typeof localStorage !== "undefined" && typeof localStorage.setItem === "function") {
       localStorage.setItem(LETTERS_STORAGE_KEY, serialized);
@@ -86,7 +87,15 @@ function writeRawSync(serialized: string): void {
   } catch {}
 }
 
-let cachedLetters: OfficialLetter[] = parseLettersJson(readRawSync());
+function readInitialLetters(): OfficialLetter[] {
+  if (Capacitor.isNativePlatform()) {
+    const preloaded = getStoredJsonSync<OfficialLetter[]>(LETTERS_STORAGE_KEY, []);
+    return normalizeLettersArray(preloaded);
+  }
+  return parseLettersJson(readWebRawSync());
+}
+
+let cachedLetters: OfficialLetter[] = readInitialLetters();
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -95,18 +104,26 @@ function notify() {
 
 async function hydrateLettersFromDb(): Promise<void> {
   if (!Capacitor.isNativePlatform()) {
-    const fresh = parseLettersJson(readRawSync());
+    const fresh = parseLettersJson(readWebRawSync());
     cachedLetters = fresh;
     notify();
     return;
   }
   try {
-    const raw = await getSetting(LETTERS_STORAGE_KEY, "[]");
-    cachedLetters = parseLettersJson(raw);
-    setMemoryCacheString(LETTERS_STORAGE_KEY, raw);
+    const rows = await getAllOfficialLetters();
+    cachedLetters = normalizeLettersArray(rows);
+    setMemoryCacheJson(LETTERS_STORAGE_KEY, cachedLetters);
     notify();
   } catch (err) {
-    console.warn("[LettersStore] Failed to hydrate from SQLite:", err);
+    console.warn("[LettersStore] Failed to hydrate from official_letters table; trying legacy settings fallback:", err);
+    try {
+      const raw = await getSetting(LETTERS_STORAGE_KEY, "[]");
+      cachedLetters = parseLettersJson(raw);
+      setMemoryCacheJson(LETTERS_STORAGE_KEY, cachedLetters);
+      notify();
+    } catch (fallbackErr) {
+      console.warn("[LettersStore] Legacy settings fallback failed:", fallbackErr);
+    }
   }
 }
 
@@ -116,20 +133,11 @@ if (typeof window !== "undefined") {
   });
 }
 
-async function persistLetters(next: OfficialLetter[]): Promise<void> {
+function persistWebLetters(next: OfficialLetter[]): void {
   const trimmed = next.slice(0, MAX_STORED_LETTERS);
   cachedLetters = trimmed;
-  const serialized = JSON.stringify(trimmed);
-  writeRawSync(serialized);
+  writeWebRawSync(JSON.stringify(trimmed));
   notify();
-
-  if (Capacitor.isNativePlatform()) {
-    try {
-      await setSetting(LETTERS_STORAGE_KEY, serialized);
-    } catch (err) {
-      console.error("[LettersStore] Failed to persist letters to SQLite:", err);
-    }
-  }
 }
 
 export function getOfficialLettersSnapshot(): OfficialLetter[] {
@@ -191,11 +199,28 @@ export async function saveOfficialLetter(letter: OfficialLetter): Promise<Offici
       ? [normalized, ...cachedLetters.filter((item) => item.id !== normalized.id)]
       : [normalized, ...cachedLetters];
 
-  await persistLetters(next);
+  if (Capacitor.isNativePlatform()) {
+    await repoUpsertOfficialLetter(normalized);
+    cachedLetters = next;
+    setMemoryCacheJson(LETTERS_STORAGE_KEY, cachedLetters);
+    notify();
+    return normalized;
+  }
+
+  persistWebLetters(next);
   return normalized;
 }
 
 export async function deleteOfficialLetter(id: string): Promise<void> {
   const next = cachedLetters.filter((item) => item.id !== id);
-  await persistLetters(next);
+
+  if (Capacitor.isNativePlatform()) {
+    await repoDeleteOfficialLetter(id);
+    cachedLetters = next;
+    setMemoryCacheJson(LETTERS_STORAGE_KEY, cachedLetters);
+    notify();
+    return;
+  }
+
+  persistWebLetters(next);
 }

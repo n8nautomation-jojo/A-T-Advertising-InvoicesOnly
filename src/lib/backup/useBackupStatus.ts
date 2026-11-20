@@ -8,7 +8,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { backupBridge, isBackupEngineAvailable } from "./bridge";
 import { loadBackupSettings, getBackupSettingsSnapshot, saveBackupSettings, subscribeBackupSettings } from "./settingsStore";
-import { assessProtection, decideDiscovery, countInvoices, newestVerified, newestWithData } from "./validation";
+import {
+  assessProtection,
+  countBusinessRecords,
+  countInvoices,
+  decideDiscovery,
+  newestVerified,
+  newestWithData,
+} from "./validation";
 import type { DiscoveryDecision, ProtectionAssessment } from "./validation";
 import type {
   BackupFileInfo,
@@ -28,6 +35,10 @@ export interface DashboardState {
   protection: ProtectionAssessment;
   encryptionAvailable: boolean;
   engineVersion: string;
+  lastBackupAt: string | null;
+  hasEncryptionKey: boolean;
+  encryptionKeyId: string;
+  databaseBusinessRecordCount: number;
   error: string | null;
 }
 
@@ -49,6 +60,7 @@ const EMPTY_DATABASE: DatabaseStatus = {
   integrityDetail: "",
   counts: {},
   invoiceCount: 0,
+  totalBusinessRecords: 0,
   fileBytes: 0,
   walBytes: 0,
   journalMode: "",
@@ -61,7 +73,20 @@ export interface LoadedStatus {
   protection: ProtectionAssessment;
   encryptionAvailable: boolean;
   engineVersion: string;
+  lastBackupAt: string | null;
+  hasEncryptionKey: boolean;
+  encryptionKeyId: string;
+  databaseBusinessRecordCount: number;
   error: string | null;
+}
+
+function pickNewerIso(a?: string | null, b?: string | null): string | null {
+  const aMs = a ? Date.parse(a) : NaN;
+  const bMs = b ? Date.parse(b) : NaN;
+  if (Number.isFinite(aMs) && Number.isFinite(bMs)) return aMs >= bMs ? a! : b!;
+  if (Number.isFinite(aMs)) return a!;
+  if (Number.isFinite(bMs)) return b!;
+  return null;
 }
 
 /** Single source of truth for "what is the backup situation right now". */
@@ -77,24 +102,38 @@ export async function loadBackupStatus(): Promise<LoadedStatus> {
         backups: [],
         settings,
         databaseInvoiceCount: 0,
+        databaseBusinessRecordCount: 0,
         now: Date.now(),
       }),
       encryptionAvailable: false,
       engineVersion: "",
+      lastBackupAt: settings.lastBackupAt,
+      hasEncryptionKey: false,
+      encryptionKeyId: "",
+      databaseBusinessRecordCount: 0,
       error: Capacitor.isNativePlatform() ? "وحدة النسخ الاحتياطي غير مثبّتة في هذا البناء." : null,
     };
   }
 
   const statusRes = await backupBridge.getStatus();
-  const storage: StorageInfo = statusRes.ok && statusRes.status ? statusRes.status.storage : EMPTY_STORAGE;
-  const database: DatabaseStatus = statusRes.ok && statusRes.status ? statusRes.status.database : EMPTY_DATABASE;
-  const backups: BackupFileInfo[] = statusRes.ok && statusRes.status ? statusRes.status.backups : [];
+  const engineStatus = statusRes.ok && statusRes.status ? statusRes.status : null;
+  const storage: StorageInfo = engineStatus ? engineStatus.storage : EMPTY_STORAGE;
+  const database: DatabaseStatus = engineStatus ? engineStatus.database : EMPTY_DATABASE;
+  const backups: BackupFileInfo[] = engineStatus ? engineStatus.backups : [];
+  const databaseBusinessRecordCount = database.totalBusinessRecords ?? countBusinessRecords(database.counts);
+  const nativeLastBackupAt = engineStatus?.lastNativeBackupAt ?? null;
+  const nativeLastBackupStatus = engineStatus?.lastNativeBackupStatus;
+  const nativeLastBackupMessage = engineStatus?.lastNativeBackupMessage ?? null;
 
   const protection = assessProtection({
     storage,
     backups,
     settings,
     databaseInvoiceCount: database.invoiceCount,
+    databaseBusinessRecordCount,
+    nativeLastBackupAt,
+    nativeLastBackupStatus,
+    nativeLastBackupMessage,
     now: Date.now(),
   });
 
@@ -108,25 +147,36 @@ export async function loadBackupStatus(): Promise<LoadedStatus> {
     database,
     backups,
     protection,
-    encryptionAvailable: statusRes.ok && statusRes.status ? statusRes.status.encryptionAvailable : false,
-    engineVersion: statusRes.ok && statusRes.status ? statusRes.status.engineVersion : "",
+    encryptionAvailable: engineStatus ? engineStatus.encryptionAvailable : false,
+    engineVersion: engineStatus ? engineStatus.engineVersion : "",
+    lastBackupAt: pickNewerIso(nativeLastBackupAt, settings.lastBackupAt),
+    hasEncryptionKey: Boolean(engineStatus?.hasEncryptionKey),
+    encryptionKeyId: engineStatus?.encryptionKeyId ?? "",
+    databaseBusinessRecordCount,
     error: statusRes.ok ? null : statusRes.message ?? null,
   };
 }
 
 export function useBackupDashboard() {
-  const [state, setState] = useState<DashboardState>(() => ({
-    loading: true,
-    available: isBackupEngineAvailable(),
-    storage: null,
-    database: null,
-    backups: [],
-    settings: getBackupSettingsSnapshot(),
-    protection: { status: "browser", reason: null, newest: null, ageHours: null, staleAt: null },
-    encryptionAvailable: false,
-    engineVersion: "",
-    error: null,
-  }));
+  const [state, setState] = useState<DashboardState>(() => {
+    const initialSettings = getBackupSettingsSnapshot();
+    return {
+      loading: true,
+      available: isBackupEngineAvailable(),
+      storage: null,
+      database: null,
+      backups: [],
+      settings: initialSettings,
+      protection: { status: "browser", reason: null, newest: null, ageHours: null, staleAt: null },
+      encryptionAvailable: false,
+      engineVersion: "",
+      lastBackupAt: initialSettings.lastBackupAt,
+      hasEncryptionKey: false,
+      encryptionKeyId: "",
+      databaseBusinessRecordCount: 0,
+      error: null,
+    };
+  });
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -144,6 +194,10 @@ export function useBackupDashboard() {
         protection: loaded.protection,
         encryptionAvailable: loaded.encryptionAvailable,
         engineVersion: loaded.engineVersion,
+        lastBackupAt: loaded.lastBackupAt,
+        hasEncryptionKey: loaded.hasEncryptionKey,
+        encryptionKeyId: loaded.encryptionKeyId,
+        databaseBusinessRecordCount: loaded.databaseBusinessRecordCount,
         error: loaded.error,
       });
     } catch (err: any) {
@@ -157,7 +211,12 @@ export function useBackupDashboard() {
     void refresh();
     const unsub = subscribeBackupSettings(() => {
       if (!mounted.current) return;
-      setState((prev) => ({ ...prev, settings: getBackupSettingsSnapshot() }));
+      const nextSettings = getBackupSettingsSnapshot();
+      setState((prev) => ({
+        ...prev,
+        settings: nextSettings,
+        lastBackupAt: pickNewerIso(prev.lastBackupAt, nextSettings.lastBackupAt),
+      }));
     });
     return () => {
       mounted.current = false;
@@ -212,6 +271,7 @@ export async function discoverForRecovery(): Promise<DiscoveryState> {
       storage: loaded.storage,
       backups: loaded.backups,
       currentInvoiceCount: loaded.database.invoiceCount,
+      currentBusinessRecordCount: loaded.databaseBusinessRecordCount,
       settings,
     },
     Date.now()
@@ -239,4 +299,4 @@ export async function buildBackupPreview(info: BackupFileInfo): Promise<BackupPr
   };
 }
 
-export { countInvoices, newestVerified, newestWithData };
+export { countBusinessRecords, countInvoices, newestVerified, newestWithData };

@@ -3,13 +3,16 @@ import { TrendingUp, DollarSign } from "lucide-react";
 import type { FinancialPerformanceReport } from "@/lib/repositories/ReportsRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { cn } from "@/lib/utils";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 
 interface Props {
   performance: FinancialPerformanceReport | null;
+  currency?: AppCurrency;
 }
 
-export function ReportsPerformanceView({ performance }: Props) {
-  const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ج.س`;
+export function ReportsPerformanceView({ performance, currency = DEFAULT_CURRENCY }: Props) {
+  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ${curLabel}`;
 
   const rows = [
     { label: "الإيراد المفوتر", value: money(performance?.revenue), tone: "neutral" },
@@ -110,11 +113,11 @@ export function ReportsPerformanceView({ performance }: Props) {
                     {exp.beneficiary || "مصروف عام"}
                   </p>
                   <p className="text-[9.5px] text-muted-foreground">
-                    {exp.date} · مسدَّد: {formatNumber(exp.paid)} ج.س
+                    {exp.date} · مسدَّد: {formatNumber(exp.paid)} {curLabel}
                   </p>
                 </div>
                 <span className="shrink-0 font-black tabular-nums text-rose-600 dark:text-rose-400">
-                  {formatNumber(exp.amount)} ج.س
+                  {formatNumber(exp.amount)} {curLabel}
                 </span>
               </div>
             ))}

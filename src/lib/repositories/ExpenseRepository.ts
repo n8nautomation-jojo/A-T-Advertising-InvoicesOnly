@@ -74,8 +74,21 @@ export async function getAllExpenses(kind?: ExpenseKind): Promise<Expense[]> {
 }
 
 /** Single grouped SQL query replacing the previous N+1 loop. */
-export async function getExpensesWithSettlement(kind?: ExpenseKind): Promise<ExpenseWithSettlement[]> {
+export async function getExpensesWithSettlement(
+  kind?: ExpenseKind,
+  currency?: AppCurrency
+): Promise<ExpenseWithSettlement[]> {
   const db = await getDb();
+  const clauses = ["e.cancelled_at IS NULL"];
+  const params: any[] = [];
+  if (kind) {
+    clauses.push("e.kind = ?");
+    params.push(kind);
+  }
+  if (currency) {
+    clauses.push("COALESCE(e.currency, 'SDG') = ?");
+    params.push(sanitizeCurrency(currency));
+  }
   const res = await db.query(
     `SELECT e.*, COALESCE(ep.paid, 0) AS paid_amount
        FROM expenses e
@@ -85,9 +98,9 @@ export async function getExpensesWithSettlement(kind?: ExpenseKind): Promise<Exp
           WHERE cancelled_at IS NULL
           GROUP BY expense_id
        ) ep ON ep.expense_id = e.id
-      WHERE e.cancelled_at IS NULL ${kind ? "AND e.kind = ?" : ""}
+      WHERE ${clauses.join(" AND ")}
       ORDER BY e.expense_date DESC, e.created_at DESC`,
-    kind ? [kind] : []
+    params
   );
   return (res.values ?? []).map((row: any) => {
     const expense = rowToExpense(row);

@@ -6,19 +6,23 @@ import type {
 } from "@/lib/repositories/ReportsRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { cn } from "@/lib/utils";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 
 interface Props {
   type: "purchases" | "cash";
   purchases: PurchasesReport | null;
   cash: CashMovementReport | null;
+  currency?: AppCurrency;
 }
 
 export function ReportsPurchasesProjectsView({
   type,
   purchases,
   cash,
+  currency = DEFAULT_CURRENCY,
 }: Props) {
-  const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ج.س`;
+  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ${curLabel}`;
 
   if (type === "purchases") {
     return (
@@ -121,7 +125,7 @@ export function ReportsPurchasesProjectsView({
                     </p>
                   </div>
                   <span className="shrink-0 font-black tabular-nums text-rose-600 dark:text-rose-400">
-                    -{formatNumber(p.amount)} ج.س
+                    -{formatNumber(p.amount)} {curLabel}
                   </span>
                 </div>
               ))}
@@ -155,7 +159,7 @@ export function ReportsPurchasesProjectsView({
                       {exp.beneficiary || exp.category || "تكلفة إنتاج"}
                     </p>
                     <p className="text-[10px] text-muted-foreground">
-                      {exp.date} · مسدَّد: {formatNumber(exp.paid)} ج.س
+                      {exp.date} · مسدَّد: {formatNumber(exp.paid)} {curLabel}
                     </p>
                   </div>
                   <span className="shrink-0 font-black tabular-nums text-foreground">
@@ -243,7 +247,7 @@ export function ReportsPurchasesProjectsView({
                       : "text-rose-600 dark:text-rose-400"
                   )}
                 >
-                  {line.inflow > 0 ? `+${formatNumber(line.inflow)}` : `-${formatNumber(line.outflow)}`} ج.س
+                  {line.inflow > 0 ? `+${formatNumber(line.inflow)}` : `-${formatNumber(line.outflow)}`} {curLabel}
                 </span>
               </div>
             ))}

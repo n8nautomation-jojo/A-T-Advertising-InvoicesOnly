@@ -9,6 +9,7 @@
  */
 
 import { Capacitor } from "@capacitor/core";
+import { markDataChangedInMemory } from "./settingsStore";
 
 let scheduled = false;
 
@@ -19,6 +20,7 @@ let scheduled = false;
  */
 export function notifyDataChanged(): void {
   if (!Capacitor.isNativePlatform()) return;
+  markDataChangedInMemory();
   if (scheduled) return;
   scheduled = true;
   setTimeout(() => {

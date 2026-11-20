@@ -8,7 +8,7 @@ import { StatusBar, Style } from "@capacitor/status-bar";
 import { triggerBack } from "./lib/backButtonHandler";
 import { initSQLiteStorage } from "./lib/sqliteStorage";
 import { ensureScheduledBackups } from "./lib/backup/autoBackup";
-import { runPreUpdateBackupIfNeeded } from "./lib/backup/restoreService";
+import { runPreMigrationNativeBackup, runPreUpdateBackupIfNeeded } from "./lib/backup/restoreService";
 import { toast } from "sonner";
 import "./styles.css";
 
@@ -25,16 +25,18 @@ if (typeof window !== "undefined") {
   });
 }
 
-// تهيئة قاعدة بيانات SQLite وترحيل أي بيانات سابقة قبل عرض التطبيق
-const storageInitPromise = initSQLiteStorage()
-  .then(() => {
-    if (typeof window !== "undefined") {
-      window.__TA_STORAGE_READY__ = true;
-    }
-  })
-  .catch((err) => {
-    console.error("SQLite storage init error:", err);
-  });
+// أخذ نسخة أمان أصلية قبل فتح قاعدة البيانات أو تشغيل أي ترحيل، ثم تهيئة SQLite
+const storageInitPromise = (async () => {
+  if (Capacitor.isNativePlatform()) {
+    await runPreMigrationNativeBackup(4000);
+  }
+  await initSQLiteStorage();
+  if (typeof window !== "undefined") {
+    window.__TA_STORAGE_READY__ = true;
+  }
+})().catch((err) => {
+  console.error("SQLite storage init error:", err);
+});
 
 /**
  * نسخة احتياطية قبل أي ترقية لقاعدة البيانات + إعادة تثبيت الجدولة اليومية.

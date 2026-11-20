@@ -30,6 +30,7 @@ const RESTORE_CLEAR_LOCALSTORAGE_KEYS = [
   "company_phone",
   "company_address_ar",
   "company_address_en",
+  "ta_official_letters_v1",
 ];
 
 function runWithWriteLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -319,21 +320,24 @@ async function preloadEntityCaches(): Promise<void> {
       { getAllOrders },
       { getAllPrintInvoices },
       { getAllProformaInvoices },
+      { getAllOfficialLetters },
     ] = await Promise.all([
       import("./repositories/CustomInvoiceRepository"),
       import("./repositories/CustomerRepository"),
       import("./repositories/OrderRepository"),
       import("./repositories/PrintInvoiceRepository"),
       import("./repositories/ProformaRepository"),
+      import("./repositories/OfficialLetterRepository"),
     ]);
 
-    const [customInvoices, customers, orders, printInvoices, proformaInvoices] =
+    const [customInvoices, customers, orders, printInvoices, proformaInvoices, officialLetters] =
       await Promise.all([
         getAllCustomInvoices().catch(() => []),
         getAllCustomers({ includeArchived: true }).catch(() => []),
         getAllOrders().catch(() => []),
         getAllPrintInvoices().catch(() => []),
         getAllProformaInvoices().catch(() => []),
+        getAllOfficialLetters().catch(() => []),
       ]);
 
     parsedCache.set("future_custom_invoices_v2", customInvoices);
@@ -341,6 +345,7 @@ async function preloadEntityCaches(): Promise<void> {
     parsedCache.set("future_print_orders_v2", orders);
     parsedCache.set("future_print_invoices_v2", printInvoices);
     parsedCache.set("future_proforma_invoices_v2", proformaInvoices);
+    parsedCache.set("ta_official_letters_v1", officialLetters);
 
     const db = await dbModule.getDb();
 

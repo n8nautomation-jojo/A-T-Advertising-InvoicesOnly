@@ -157,8 +157,33 @@ export function newestVerified(backups: BackupFileInfo[]): BackupFileInfo | null
   return best;
 }
 
+export const BUSINESS_RECORD_TABLES = [
+  "custom_invoices",
+  "proforma_invoices",
+  "print_invoices",
+  "customers",
+  "suppliers",
+  "orders",
+  "financial_accounts",
+  "customer_payments",
+  "supplier_payments",
+  "expenses",
+  "expense_payments",
+  "official_letters",
+] as const;
+
+export function countBusinessRecords(counts: Record<string, number> | undefined): number {
+  if (!counts) return 0;
+  let total = 0;
+  for (const table of BUSINESS_RECORD_TABLES) {
+    const n = Number(counts[table] ?? 0);
+    if (Number.isFinite(n) && n > 0) total += n;
+  }
+  return total;
+}
+
 /**
- * Newest verified backup that actually contains data (invoices or records),
+ * Newest verified backup that actually contains data (invoices or business records),
  * falling back to the newest verified backup if none have data.
  * This prevents picking an empty pre-update safety backup over real historical backups.
  */
@@ -168,8 +193,9 @@ export function newestWithData(backups: BackupFileInfo[]): BackupFileInfo | null
 
   const withData = verified.filter((b) => {
     const invCount = b.manifest!.invoiceCount ?? countInvoices(b.manifest!.counts);
+    const businessCount = b.manifest!.totalBusinessRecords ?? countBusinessRecords(b.manifest!.counts);
     const totalCount = b.manifest!.counts?.total ?? 0;
-    return invCount > 0 || totalCount > 0;
+    return invCount > 0 || businessCount > 0 || totalCount > 0;
   });
 
   const pool = withData.length > 0 ? withData : verified;
@@ -193,6 +219,10 @@ export interface ProtectionContext {
   settings: BackupSettings;
   databaseInvoiceCount: number;
   now: number;
+  databaseBusinessRecordCount?: number;
+  nativeLastBackupAt?: string | null;
+  nativeLastBackupStatus?: "ok" | "failed" | "never";
+  nativeLastBackupMessage?: string | null;
 }
 
 export interface ProtectionAssessment {
@@ -206,8 +236,8 @@ export interface ProtectionAssessment {
 /**
  * The protection level shown in the UI.
  * "protected" requires a *verified* backup that is recent enough AND covers at
- * least the invoices currently in the database — a backup taken before the
- * last 40 invoices is not protection, it is a near miss.
+ * least the invoices and business records currently in the database — a backup
+ * taken before the last 40 invoices or recent edits is not protection, it is a near miss.
  */
 export function assessProtection(ctx: ProtectionContext): ProtectionAssessment {
   const { storage, backups, settings, databaseInvoiceCount, now } = ctx;
@@ -255,11 +285,25 @@ export function assessProtection(ctx: ProtectionContext): ProtectionAssessment {
   const ageHours = Math.max(0, (now - createdMs) / 3_600_000);
   const staleAt = settings.staleAfterHours * 3_600_000;
   const backupInvoices = newest.manifest!.invoiceCount ?? countInvoices(newest.manifest!.counts);
+  const backupBusinessRecords = newest.manifest!.totalBusinessRecords ?? countBusinessRecords(newest.manifest!.counts);
 
-  if (settings.lastBackupStatus === "failed" && settings.lastBackupAt && Date.parse(settings.lastBackupAt) >= createdMs - 1000) {
+  // Merge native WorkManager last backup status if newer than settings (or if settings has none).
+  const settingsLastMs = settings.lastBackupAt ? Date.parse(settings.lastBackupAt) : NaN;
+  const nativeLastMs = ctx.nativeLastBackupAt ? Date.parse(ctx.nativeLastBackupAt) : NaN;
+  const useNativeStatus =
+    Boolean(ctx.nativeLastBackupStatus) &&
+    ctx.nativeLastBackupStatus !== "never" &&
+    Number.isFinite(nativeLastMs) &&
+    (!Number.isFinite(settingsLastMs) || nativeLastMs >= settingsLastMs);
+
+  const effectiveLastStatus = useNativeStatus ? ctx.nativeLastBackupStatus! : settings.lastBackupStatus;
+  const effectiveLastAt = useNativeStatus ? ctx.nativeLastBackupAt! : settings.lastBackupAt;
+  const effectiveLastMessage = useNativeStatus ? (ctx.nativeLastBackupMessage ?? null) : settings.lastBackupMessage;
+
+  if (effectiveLastStatus === "failed" && effectiveLastAt && Date.parse(effectiveLastAt) >= createdMs - 1000) {
     return {
       status: "outdated",
-      reason: "فشلت آخر محاولة نسخ احتياطي: " + (settings.lastBackupMessage || "خطأ غير معروف"),
+      reason: "فشلت آخر محاولة نسخ احتياطي: " + (effectiveLastMessage || "خطأ غير معروف"),
       newest,
       ageHours,
       staleAt,
@@ -275,6 +319,34 @@ export function assessProtection(ctx: ProtectionContext): ProtectionAssessment {
       ageHours,
       staleAt,
     };
+  }
+
+  if (ctx.databaseBusinessRecordCount != null && backupBusinessRecords < ctx.databaseBusinessRecordCount) {
+    return {
+      status: "unproven",
+      reason:
+        "أحدث نسخة سليمة تحتوي " +
+        backupBusinessRecords +
+        " سجلاً بينما الجهاز يحتوي " +
+        ctx.databaseBusinessRecordCount +
+        " — توجد سجلات جديدة (عملاء أو خطابات أو مدفوعات أو مصروفات) لم تُنسخ احتياطياً بعد.",
+      newest,
+      ageHours,
+      staleAt,
+    };
+  }
+
+  if (settings.lastDataChangeAt) {
+    const lastChangeMs = Date.parse(settings.lastDataChangeAt);
+    if (Number.isFinite(lastChangeMs) && lastChangeMs > createdMs + 2000) {
+      return {
+        status: "unproven",
+        reason: "حدثت تعديلات حديثة على البيانات بعد آخر نسخة احتياطية — أنشئ نسخة جديدة لتأمين آخر التغييرات.",
+        newest,
+        ageHours,
+        staleAt,
+      };
+    }
   }
 
   if (ageHours * 3_600_000 > staleAt) {
@@ -299,6 +371,7 @@ export interface DiscoveryContext {
   storage: StorageInfo;
   backups: BackupFileInfo[];
   currentInvoiceCount: number;
+  currentBusinessRecordCount?: number;
   settings: BackupSettings;
 }
 
@@ -323,10 +396,15 @@ export function decideDiscovery(ctx: DiscoveryContext, nowMs: number): Discovery
   }
   const ageDays = (nowMs - Date.parse(newest.manifest!.createdAt)) / 86_400_000;
   // Prompt only when there is genuinely something worth restoring: either the
-  // device has less data than the backup, or the backup is recent enough that
-  // the user almost certainly wants it back.
+  // device has less data than the backup (invoices or other business records),
+  // or the backup is recent enough that the user almost certainly wants it back.
   const backupInvoices = newest.manifest!.invoiceCount ?? countInvoices(newest.manifest!.counts);
-  const worthRestoring = backupInvoices > ctx.currentInvoiceCount || ageDays <= 45;
+  const backupBusinessRecords = newest.manifest!.totalBusinessRecords ?? countBusinessRecords(newest.manifest!.counts);
+  const currentBusinessRecords = ctx.currentBusinessRecordCount ?? ctx.currentInvoiceCount;
+  const worthRestoring =
+    backupInvoices > ctx.currentInvoiceCount ||
+    backupBusinessRecords > currentBusinessRecords ||
+    ageDays <= 45;
   if (!worthRestoring) {
     return { newest, shouldPrompt: false, reason: "nothing-to-recover", corruptCount };
   }

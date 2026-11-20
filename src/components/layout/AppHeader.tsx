@@ -1,12 +1,18 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
+import { Capacitor } from "@capacitor/core";
 import { Moon, Sun, Bell, Lock, Calendar, BookOpen } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useTheme } from "@/hooks/useTheme";
-import { useOrders } from "@/lib/ordersStore";
+import { useCustomInvoices } from "@/lib/billing/store";
+import { settlementFor, useSettlementVersion } from "@/lib/financeStore";
+import { getExpensesWithSettlement, type ExpenseWithSettlement } from "@/lib/repositories/ExpenseRepository";
+import { getLocalIsoDate } from "@/lib/dateUtils";
+import { formatNumber } from "@/lib/printCalculator";
+import { SUPPORTED_CURRENCIES } from "@/lib/currency/types";
 import { triggerOpenTour } from "@/lib/appTourStore";
 import { getTourSectionFromPath } from "./navConfig";
-import { NotificationPanel } from "./NotificationPanel";
+import { NotificationPanel, type AppNotificationItem } from "./NotificationPanel";
 
 const dateFmt = new Intl.DateTimeFormat("ar", {
   weekday: "short",
@@ -20,7 +26,9 @@ export function AppHeader() {
   const pathname = location.pathname;
 
   const currentSectionInfo = useMemo(() => getTourSectionFromPath(pathname), [pathname]);
-  const orders = useOrders();
+  const invoices = useCustomInvoices();
+  const settlementVersion = useSettlementVersion();
+  const [unpaidExpenses, setUnpaidExpenses] = useState<ExpenseWithSettlement[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [today, setToday] = useState("");
   const bellTriggerRef = useRef<HTMLButtonElement>(null);
@@ -33,17 +41,80 @@ export function AppHeader() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    const loadExpenses = () => {
+      void getExpensesWithSettlement()
+        .then((rows) => {
+          if (!cancelled) {
+            setUnpaidExpenses(rows.filter((r) => r.settlement.outstanding > 0.01));
+          }
+        })
+        .catch(() => {
+          // ignore if DB not initialized yet
+        });
+    };
+    loadExpenses();
+    window.addEventListener("finance-changed", loadExpenses);
+    window.addEventListener("native-storage-ready", loadExpenses);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("finance-changed", loadExpenses);
+      window.removeEventListener("native-storage-ready", loadExpenses);
+    };
+  }, []);
+
   const handleCloseNotifications = useCallback(() => {
     setShowNotifications(false);
   }, []);
 
-  const urgentOrders = useMemo(
-    () => orders.filter((o) => o?.priority === "urgent" && o?.status !== "delivered"),
-    [orders]
-  );
+  const alerts = useMemo<AppNotificationItem[]>(() => {
+    // Depend on settlementVersion so badge stays live after receipts/cancellations.
+    void settlementVersion;
+    const todayIso = getLocalIsoDate();
+    const list: AppNotificationItem[] = [];
+
+    for (const inv of invoices) {
+      if (inv.cancelledAt || inv.meta.type !== "sales") continue;
+      const st = settlementFor(inv.id, Number(inv.totalAmount) || 0);
+      if (st.outstanding <= 0.01) continue;
+
+      const cur = inv.currency || inv.meta.currency || "SDG";
+      const curLabel = cur === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[cur]?.symbol ?? cur;
+      const isOverdue = Boolean(inv.meta.dueDate && inv.meta.dueDate < todayIso);
+      list.push({
+        id: `inv-${inv.id}`,
+        severity: isOverdue ? "urgent" : "warn",
+        kind: isOverdue ? "overdue_invoice" : "open_invoice",
+        title: `${isOverdue ? "فاتورة متأخرة" : "فاتورة غير محصّلة"} ${inv.reference || `#${inv.meta.serial}`}`,
+        subtitle: `${inv.meta.partyName || "عميل غير محدد"} · متبقي ${formatNumber(st.outstanding)} ${curLabel}`,
+        to: inv.customerId ? "/customers" : "/finance",
+        search: inv.customerId ? { id: inv.customerId } : undefined,
+      });
+    }
+
+    for (const exp of unpaidExpenses.slice(0, 8)) {
+      const curLabel =
+        exp.currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[exp.currency]?.symbol ?? exp.currency;
+      list.push({
+        id: `exp-${exp.id}`,
+        severity: "warn",
+        kind: "unpaid_expense",
+        title: `مصروف غير مسدَّد: ${exp.beneficiary || exp.category || "مصروف"}`,
+        subtitle: `متبقي ${formatNumber(exp.settlement.outstanding)} ${curLabel} · ${exp.expenseDate}`,
+        to: "/expenses",
+      });
+    }
+
+    list.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "urgent" ? -1 : 1));
+    return list.slice(0, 20);
+  }, [invoices, unpaidExpenses, settlementVersion]);
 
   const isDark = theme === "dark";
-  const hasUrgent = urgentOrders.length > 0;
+  const urgentCount = alerts.filter((a) => a.severity === "urgent").length;
+  const badgeCount = urgentCount > 0 ? urgentCount : alerts.length;
+  const hasUrgent = badgeCount > 0;
 
   return (
     <header
@@ -158,13 +229,15 @@ export function AppHeader() {
               ref={bellTriggerRef}
               type="button"
               onClick={() => setShowNotifications((v) => !v)}
-              aria-label={`التنبيهات${hasUrgent ? ` — ${urgentOrders.length} عاجل` : ""}`}
+              aria-label={`التنبيهات${hasUrgent ? ` — ${badgeCount} تنبيه` : ""}`}
               aria-expanded={showNotifications}
               title="التنبيهات"
               className={[
                 "relative grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl sm:rounded-2xl border btn-tactile interactive shadow-2xs active:scale-[0.94] transition-transform duration-100",
-                hasUrgent
+                urgentCount > 0
                   ? "border-destructive/30 bg-destructive/8 text-destructive"
+                  : hasUrgent
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
                   : "border-border/60 bg-secondary/50 text-foreground hover:bg-card hover:border-primary/30",
               ].join(" ")}
             >
@@ -172,16 +245,19 @@ export function AppHeader() {
               {hasUrgent && (
                 <span
                   aria-hidden="true"
-                  className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[8px] font-black text-white ring-2 ring-background"
+                  className={[
+                    "absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-black text-white ring-2 ring-background",
+                    urgentCount > 0 ? "bg-destructive" : "bg-amber-500",
+                  ].join(" ")}
                 >
-                  {urgentOrders.length}
+                  {badgeCount}
                 </span>
               )}
             </button>
 
             {showNotifications && (
               <NotificationPanel
-                urgentOrders={urgentOrders}
+                alerts={alerts}
                 onClose={handleCloseNotifications}
                 triggerRef={bellTriggerRef}
               />

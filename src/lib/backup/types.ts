@@ -25,13 +25,18 @@
 
 /** Archive magic bytes. */
 export const BACKUP_ARCHIVE_MAGIC = "TABK";
-/** Archive format version produced by this build. */
+/** Archive format version produced by v1 builds. */
 export const BACKUP_ARCHIVE_FORMAT_VERSION = 1;
-/** Fixed prefix length before keyId: 4 magic + 1 version + 1 flags + 2 keyIdLen + 2 reserved + 8 payloadLen. */
+/** Archive format version produced by v2 builds (binary header + optional GZIP + AAD). */
+export const BACKUP_ARCHIVE_FORMAT_VERSION_V2 = 2;
+/** Fixed v1 prefix length before keyId: 4 magic + 1 version + 1 flags + 2 keyIdLen + 2 reserved + 8 payloadLen. */
 export const BACKUP_ARCHIVE_PREFIX_LEN = 18;
+/** Fixed v2 prefix length before keyId: 4 magic + 1 version + 1 flags + 2 keyIdLen + 4 headerLen + 8 dbBlockLen. */
+export const BACKUP_ARCHIVE_V2_PREFIX_LEN = 20;
 export const BACKUP_GCM_TAG_LEN = 16;
 export const BACKUP_KEY_ID_LEN = 8;
 export const BACKUP_SEALED_FLAG = 0x01;
+export const BACKUP_COMPRESSED_FLAG = 0x02;
 
 /** Manifest schema version (independent from the database schema version). */
 export const BACKUP_MANIFEST_VERSION = 1;
@@ -91,6 +96,7 @@ export const BACKUP_TABLES = [
   "expenses",
   "expense_payments",
   "financial_transactions",
+  "official_letters",
   "document_sequences",
   "audit_log",
   "sequences",
@@ -134,6 +140,8 @@ export interface BackupManifest {
   integrity: "ok";
   /** Total invoice-related records (custom + proforma + print). */
   invoiceCount: number;
+  /** Total business records across all core modules (invoices, customers, orders, finance, letters). */
+  totalBusinessRecords?: number;
   installationId: string;
   appId: string;
   device: string;
@@ -203,6 +211,8 @@ export interface BackupSettings {
   dismissedRecoveryBackupId: string | null;
   /** Key of the last app version for which a pre-update backup was attempted. */
   lastPreUpdateVersion: string | null;
+  /** Timestamp when the user last exported or confirmed saving their recovery key. */
+  recoveryKeyExportedAt?: string | null;
 }
 
 export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
@@ -222,6 +232,7 @@ export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   onboardingCompletedAt: null,
   dismissedRecoveryBackupId: null,
   lastPreUpdateVersion: null,
+  recoveryKeyExportedAt: null,
 };
 
 export type StorageState =
@@ -253,6 +264,7 @@ export interface DatabaseStatus {
   integrityDetail: string;
   counts: TableCounts;
   invoiceCount: number;
+  totalBusinessRecords?: number;
   fileBytes: number;
   walBytes: number;
   journalMode: string;
@@ -270,6 +282,11 @@ export interface EngineStatus {
   protectionReason: string | null;
   encryptionAvailable: boolean;
   engineVersion: string;
+  lastNativeBackupAt?: string | null;
+  lastNativeBackupStatus?: "ok" | "failed" | "never";
+  lastNativeBackupMessage?: string | null;
+  hasEncryptionKey?: boolean;
+  encryptionKeyId?: string;
 }
 
 export interface BackupRunResult {
@@ -317,6 +334,8 @@ export interface RestoreResult {
   fileName?: string;
   /** Pre-restore safety copy created automatically before any write. */
   safetyBackupId?: string;
+  /** Explanation if pre-restore safety backup was skipped (e.g. empty database). */
+  safetyBackupSkippedReason?: string;
   counts: TableCounts;
   verifying?: {
     countsMatch: boolean;

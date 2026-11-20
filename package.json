@@ -1,7 +1,7 @@
 {
   "name": "ta-advertising-invoicing",
   "private": true,
-  "version": "2.2.3-lifetime",
+  "version": "2.3.0-lifetime",
   "type": "module",
   "scripts": {
     "dev": "vite",

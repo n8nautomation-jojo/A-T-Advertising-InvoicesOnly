@@ -57,6 +57,7 @@ function sanitize(raw: any): BackupSettings {
     onboardingCompletedAt: typeof raw.onboardingCompletedAt === "string" ? raw.onboardingCompletedAt : null,
     dismissedRecoveryBackupId: typeof raw.dismissedRecoveryBackupId === "string" ? raw.dismissedRecoveryBackupId : null,
     lastPreUpdateVersion: typeof raw.lastPreUpdateVersion === "string" ? raw.lastPreUpdateVersion : null,
+    recoveryKeyExportedAt: typeof raw.recoveryKeyExportedAt === "string" ? raw.recoveryKeyExportedAt : null,
   };
 }
 
@@ -100,6 +101,13 @@ export async function loadBackupSettings(force = false): Promise<BackupSettings>
       if (!next.folderUri && preservedFolderUri) {
         next.folderUri = preservedFolderUri;
         next.folderLabel = preservedFolderLabel;
+      }
+      if (!force && snapshot.lastDataChangeAt) {
+        const memMs = Date.parse(snapshot.lastDataChangeAt);
+        const dbMs = next.lastDataChangeAt ? Date.parse(next.lastDataChangeAt) : NaN;
+        if (Number.isFinite(memMs) && (!Number.isFinite(dbMs) || memMs > dbMs)) {
+          next.lastDataChangeAt = snapshot.lastDataChangeAt;
+        }
       }
       snapshot = next;
       notify();
@@ -155,6 +163,17 @@ export async function saveBackupSettings(patch: Partial<BackupSettings>): Promis
     }
   }
   return snapshot;
+}
+
+/**
+ * Updates `lastDataChangeAt` synchronously in memory and notifies subscribers
+ * without adding an extra SQLite write on every mutation. Persisted naturally
+ * whenever settings or a backup run saves to SQLite.
+ */
+export function markDataChangedInMemory(iso?: string): void {
+  const nextIso = typeof iso === "string" && iso ? iso : new Date().toISOString();
+  snapshot = { ...snapshot, lastDataChangeAt: nextIso };
+  notify();
 }
 
 /** Records the outcome of a backup run for the dashboard. */

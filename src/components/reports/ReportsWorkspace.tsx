@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useSearch } from "@tanstack/react-router";
 import { PageShell } from "@/components/layout/PageShell";
 import { useCustomers } from "@/lib/customersStore";
 import { getAllSuppliers, type Supplier } from "@/lib/repositories/SupplierRepository";
@@ -30,11 +31,17 @@ import { ReportsStatementsView } from "./ReportsStatementsView";
 
 export function ReportsWorkspace() {
   const customers = useCustomers();
+  const routeSearch = useSearch({ strict: false }) as {
+    tab?: ReportTab;
+    customerId?: string;
+    supplierId?: string;
+  };
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<ReportTab>("performance");
+  const [activeTab, setActiveTab] = useState<ReportTab>(routeSearch?.tab ?? "performance");
+  const [currency, setCurrency] = useState<AppCurrency>("SDG");
 
   const [sales, setSales] = useState<SalesPerformance | null>(null);
   const [collections, setCollections] = useState<CustomerCollectionsReport | null>(null);
@@ -42,13 +49,36 @@ export function ReportsWorkspace() {
   const [performance, setPerformance] = useState<FinancialPerformanceReport | null>(null);
   const [cash, setCash] = useState<CashMovementReport | null>(null);
 
-  const [statementCustomerId, setStatementCustomerId] = useState<string | null>(null);
+  const [statementCustomerId, setStatementCustomerId] = useState<string | null>(
+    routeSearch?.customerId ?? null
+  );
   const [statement, setStatement] = useState<CustomerStatement | null>(null);
-  const [statementSupplierId, setStatementSupplierId] = useState<string | null>(null);
+  const [statementSupplierId, setStatementSupplierId] = useState<string | null>(
+    routeSearch?.supplierId ?? null
+  );
   const [supplierStatement, setSupplierStatement] = useState<SupplierStatement | null>(null);
-  const [statementCurrency, setStatementCurrency] = useState<AppCurrency>("SDG");
+
+  useEffect(() => {
+    if (routeSearch?.tab) setActiveTab(routeSearch.tab);
+    if (routeSearch?.customerId) {
+      setActiveTab("statements");
+      setStatementCustomerId(routeSearch.customerId);
+    }
+    if (routeSearch?.supplierId) {
+      setActiveTab("statements");
+      setStatementSupplierId(routeSearch.supplierId);
+    }
+  }, [routeSearch?.tab, routeSearch?.customerId, routeSearch?.supplierId]);
 
   const range = useMemo(() => ({ from: from || undefined, to: to || undefined }), [from, to]);
+
+  const loadSuppliers = useCallback(async () => {
+    try {
+      setSuppliers(await getAllSuppliers());
+    } catch (err) {
+      console.warn("[Reports] suppliers failed:", err);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,11 +90,11 @@ export function ReportsWorkspace() {
         performanceData,
         cashData,
       ] = await Promise.all([
-        getSalesPerformance(range),
-        getCustomerCollectionsReport(range),
-        getPurchasesReport(range),
-        getFinancialPerformanceReport(range),
-        getCashMovementReport(range),
+        getSalesPerformance(range, currency),
+        getCustomerCollectionsReport(range, undefined, currency),
+        getPurchasesReport(range, currency),
+        getFinancialPerformanceReport(range, currency),
+        getCashMovementReport(range, currency),
       ]);
       setSales(salesData);
       setCollections(collectionsData);
@@ -76,21 +106,22 @@ export function ReportsWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [range, currency]);
 
   useEffect(() => {
     void load();
-  }, [load]);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        setSuppliers(await getAllSuppliers());
-      } catch (err) {
-        console.warn("[Reports] suppliers failed:", err);
-      }
-    })();
-  }, []);
+    void loadSuppliers();
+    const onRefresh = () => {
+      void load();
+      void loadSuppliers();
+    };
+    window.addEventListener("native-storage-ready", onRefresh);
+    window.addEventListener("finance-changed", onRefresh);
+    return () => {
+      window.removeEventListener("native-storage-ready", onRefresh);
+      window.removeEventListener("finance-changed", onRefresh);
+    };
+  }, [load, loadSuppliers]);
 
   useEffect(() => {
     if (!statementCustomerId) {
@@ -98,7 +129,7 @@ export function ReportsWorkspace() {
       return;
     }
     let cancelled = false;
-    void getCustomerStatement(statementCustomerId, range, statementCurrency)
+    void getCustomerStatement(statementCustomerId, range, currency)
       .then((res) => {
         if (!cancelled) setStatement(res);
       })
@@ -108,7 +139,7 @@ export function ReportsWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [statementCustomerId, range, statementCurrency]);
+  }, [statementCustomerId, range, currency]);
 
   useEffect(() => {
     if (!statementSupplierId) {
@@ -116,7 +147,7 @@ export function ReportsWorkspace() {
       return;
     }
     let cancelled = false;
-    void getSupplierStatement(statementSupplierId, range, statementCurrency)
+    void getSupplierStatement(statementSupplierId, range, currency)
       .then((res) => {
         if (!cancelled) setSupplierStatement(res);
       })
@@ -126,7 +157,7 @@ export function ReportsWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [statementSupplierId, range, statementCurrency]);
+  }, [statementSupplierId, range, currency]);
 
   const handleQuickPreset = (preset: "today" | "month" | "year" | "all") => {
     if (preset === "all") {
@@ -167,16 +198,22 @@ export function ReportsWorkspace() {
         <ReportsHeader
           from={from}
           to={to}
+          currency={currency}
+          onCurrencyChange={setCurrency}
           onFromChange={setFrom}
           onToChange={setTo}
           onQuickPreset={handleQuickPreset}
-          onRefresh={() => void load()}
+          onRefresh={() => {
+            void load();
+            void loadSuppliers();
+          }}
           loading={loading}
         />
 
         <ReportsIconCards
           activeTab={activeTab}
           onSelectTab={setActiveTab}
+          currency={currency}
           metrics={metrics}
         />
 
@@ -188,7 +225,7 @@ export function ReportsWorkspace() {
         ) : (
           <div className="space-y-4 pt-1 transition-all duration-200">
             {activeTab === "performance" && (
-              <ReportsPerformanceView performance={performance} />
+              <ReportsPerformanceView performance={performance} currency={currency} />
             )}
 
             {(activeTab === "sales" || activeTab === "collections") && (
@@ -196,6 +233,7 @@ export function ReportsWorkspace() {
                 type={activeTab}
                 sales={sales}
                 collections={collections}
+                currency={currency}
               />
             )}
 
@@ -204,6 +242,7 @@ export function ReportsWorkspace() {
                 type={activeTab}
                 purchases={purchases}
                 cash={cash}
+                currency={currency}
               />
             )}
 
@@ -215,8 +254,8 @@ export function ReportsWorkspace() {
                 statementSupplierId={statementSupplierId}
                 statement={statement}
                 supplierStatement={supplierStatement}
-                currency={statementCurrency}
-                onCurrencyChange={setStatementCurrency}
+                currency={currency}
+                onCurrencyChange={setCurrency}
                 onSelectCustomer={setStatementCustomerId}
                 onSelectSupplier={setStatementSupplierId}
               />

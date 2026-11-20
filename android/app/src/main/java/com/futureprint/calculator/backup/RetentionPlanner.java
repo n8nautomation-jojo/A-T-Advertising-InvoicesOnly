@@ -20,22 +20,23 @@ import org.json.JSONObject;
  * Retention policy — Java port of src/lib/backup/retention.ts.
  *
  * Same invariants:
- *  1. Only daily / weekly / monthly backups (and excess transaction backups
- *     beyond MAX_TRANSACTION_BACKUPS) are prunable.
- *  2. Manual, pre-update and pre-restore copies are ALWAYS protected and never pruned.
- *  3. Only VERIFIED backups are candidates; unreadable files are left alone
- *     (one may still be recoverable by a future build).
- *  4. The newest `keepMinimum` files are always kept.
- *  5. The file being written right now (protectName) is never pruned.
+ *  1. Daily / weekly / monthly backups follow the configured bucket limits.
+ *  2. Transaction backups are capped at MAX_TRANSACTION_BACKUPS (10).
+ *  3. Safety backups (`pre-restore`, `pre-update`) are each capped at
+ *     MAX_SAFETY_BACKUPS (5) so they never accumulate unboundedly.
+ *  4. Manual copies are ALWAYS protected and never pruned.
+ *  5. Only VERIFIED backups are candidates; unreadable files are left alone.
+ *  6. The newest `keepMinimum` files and `protectName` are always kept.
  *
  * Buckets use the device's local calendar (Java TimeZone offsetMinutes, positive east of UTC).
  */
 final class RetentionPlanner {
 
     private static final Set<String> ALWAYS_KEEP_KINDS = Collections.unmodifiableSet(
-        new HashSet<>(Arrays.asList("manual", "pre-update", "pre-restore"))
+        new HashSet<>(Arrays.asList("manual"))
     );
     private static final int MAX_TRANSACTION_BACKUPS = 10;
+    private static final int MAX_SAFETY_BACKUPS = 5;
 
     private RetentionPlanner() {}
 
@@ -58,6 +59,8 @@ final class RetentionPlanner {
         Map<String, List<BackupEngine.FileRecord>> weekly = new LinkedHashMap<>();
         Map<String, List<BackupEngine.FileRecord>> monthly = new LinkedHashMap<>();
         List<BackupEngine.FileRecord> transactions = new ArrayList<>();
+        List<BackupEngine.FileRecord> preRestore = new ArrayList<>();
+        List<BackupEngine.FileRecord> preUpdate = new ArrayList<>();
 
         for (BackupEngine.FileRecord r : sorted) {
             String kind = r.manifest.optString("kind", "");
@@ -73,6 +76,10 @@ final class RetentionPlanner {
                 add(monthly, monthlyKey(iso, offsetMinutes), r);
             } else if ("transaction".equals(kind)) {
                 transactions.add(r);
+            } else if ("pre-restore".equals(kind)) {
+                preRestore.add(r);
+            } else if ("pre-update".equals(kind)) {
+                preUpdate.add(r);
             }
         }
 
@@ -83,6 +90,13 @@ final class RetentionPlanner {
         // Keep newest MAX_TRANSACTION_BACKUPS transaction backups so they stay bounded.
         for (int i = MAX_TRANSACTION_BACKUPS; i < transactions.size(); i++) {
             candidates.add(transactions.get(i).fileName);
+        }
+        // Cap pre-restore and pre-update safety backups at MAX_SAFETY_BACKUPS each.
+        for (int i = MAX_SAFETY_BACKUPS; i < preRestore.size(); i++) {
+            candidates.add(preRestore.get(i).fileName);
+        }
+        for (int i = MAX_SAFETY_BACKUPS; i < preUpdate.size(); i++) {
+            candidates.add(preUpdate.get(i).fileName);
         }
 
         Set<String> protectedNames = new HashSet<>();

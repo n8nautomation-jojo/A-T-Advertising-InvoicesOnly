@@ -15,9 +15,10 @@
 
 import { Capacitor } from "@capacitor/core";
 import { toast } from "sonner";
+import { APP_VERSION } from "@/lib/appVersion";
 import { closeDb, getDb } from "@/lib/database";
 import { DB_VERSION } from "@/lib/database/schema";
-import { flushWalBeforeBackup } from "./autoBackup";
+import { ensureScheduledBackups, flushWalBeforeBackup } from "./autoBackup";
 import { backupBridge, isBackupEngineAvailable } from "./bridge";
 import { sha256Hex, utf8Encode } from "./crypto";
 import { getBackupSettingsSnapshot, loadBackupSettings, saveBackupSettings } from "./settingsStore";
@@ -25,7 +26,33 @@ import { normalizeLegacyBackup, detectLegacyBackup } from "./legacyImport";
 import type { RestoreMode, RestoreResult } from "./types";
 
 const PRE_UPDATE_MARKER = "backup_pre_update_done_v";
-const APP_RELEASE_VERSION = "2.0.0-lifetime";
+
+/**
+ * Takes a native pre-update snapshot BEFORE `initSQLiteStorage()` opens SQLite
+ * and runs any pending schema migrations. Bounded by a timeout and never throws
+ * so startup can never hang or crash.
+ */
+export async function runPreMigrationNativeBackup(timeoutMs = 5000): Promise<void> {
+  if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable()) return;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const result = await Promise.race([
+      backupBridge.preparePreUpdateBackup(APP_VERSION, DB_VERSION),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), Math.max(500, timeoutMs));
+      }),
+    ]);
+    if (result && result.ok && !result.skipped && result.fileName) {
+      console.info("[Backup] pre-migration native backup created:", result.fileName);
+    } else if (result && !result.ok) {
+      console.warn("[Backup] pre-migration native backup warning:", result.message);
+    }
+  } catch (err) {
+    console.warn("[Backup] pre-migration native backup skipped:", err);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
 
 /** True on the first launch after the app version or DB schema version changed. */
 export async function runPreUpdateBackupIfNeeded(allowed = true): Promise<boolean> {
@@ -36,7 +63,7 @@ export async function runPreUpdateBackupIfNeeded(allowed = true): Promise<boolea
     if (!settings.folderUri) return false;
     const info = await backupBridge.getEngineInfo();
     if (!info?.ok) return false;
-    const versionKey = `${PRE_UPDATE_MARKER}${APP_RELEASE_VERSION}_schema${DB_VERSION}_engine${info.engineVersion}`;
+    const versionKey = `${PRE_UPDATE_MARKER}${APP_VERSION}_schema${DB_VERSION}_engine${info.engineVersion}`;
     if (settings.lastPreUpdateVersion === versionKey) return false;
     // Record the attempt first: a failing backup must not retry on every launch,
     // it surfaces through the dashboard warning instead.
@@ -76,6 +103,10 @@ export async function reloadAllStoresFromDatabase(): Promise<void> {
     // its marker is absent in a restored older snapshot, then preloads caches.
     await initSQLiteStorage();
     await loadBackupSettings(true);
+    // Re-sync restored encryption, daily schedule, and retention settings back to native SharedPreferences.
+    void ensureScheduledBackups().catch((err) => {
+      console.warn("[Backup] native schedule/settings sync after restore failed:", err);
+    });
     // Signal every store hook, finance ledger and profile header to refresh.
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event("native-storage-ready"));

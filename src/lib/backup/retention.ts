@@ -96,76 +96,98 @@ function groupBy(list: Candidate[], keyOf: (c: Candidate) => string): Map<string
   return map;
 }
 
-  /**
-   * Computes which files survive.
-   *
-   * Each lane is scored independently so a protected file in one lane can
-   * never "use up" a slot in another:
-   *   - daily lane  : daily/manual/transaction files → keep newest policy.daily DAYS
-   *   - weekly lane : weekly files                   → keep newest policy.weekly ISO WEEKS
-   *   - monthly lane: monthly files                  → keep newest policy.monthly MONTHS
-   * Within a kept day/week/month only the newest file survives; older files of
-   * the same period are duplicates of the same data and are pruned.
-   */
-  export function planRetention(backups: BackupFileInfo[], policy: RetentionPolicy, timeZoneOffsetMinutes: number): RetentionDecision {
-    const candidates = toCandidates(backups);
-    const calendarOf = (c: Candidate) => localCalendar(c.createdAt, timeZoneOffsetMinutes);
+export const MAX_TRANSACTION_BACKUPS = 10;
+export const MAX_SAFETY_BACKUPS = 5;
 
-    const daily = groupBy(
-      candidates.filter((c) => c.kind === "daily" || c.kind === "manual" || c.kind === "transaction"),
-      (c) => dailyKey(calendarOf(c))
-    );
-    const weekly = groupBy(candidates.filter((c) => c.kind === "weekly"), (c) => weeklyKey(calendarOf(c)));
-    const monthly = groupBy(candidates.filter((c) => c.kind === "monthly"), (c) => monthlyKey(calendarOf(c)));
+/**
+ * Computes which files survive.
+ *
+ * Each lane is scored independently so a protected file in one lane can
+ * never "use up" a slot in another:
+ *   - manual lane      : kept forever (user's explicit snapshots)
+ *   - transaction lane : keep newest MAX_TRANSACTION_BACKUPS (10)
+ *   - pre-restore lane : keep newest MAX_SAFETY_BACKUPS (5)
+ *   - pre-update lane  : keep newest MAX_SAFETY_BACKUPS (5)
+ *   - daily lane       : daily files   → keep newest policy.daily DAYS
+ *   - weekly lane      : weekly files  → keep newest policy.weekly ISO WEEKS
+ *   - monthly lane     : monthly files → keep newest policy.monthly MONTHS
+ * Within a kept day/week/month only the newest file survives; older files of
+ * the same period are duplicates of the same data and are pruned.
+ */
+export function planRetention(backups: BackupFileInfo[], policy: RetentionPolicy, timeZoneOffsetMinutes: number): RetentionDecision {
+  const candidates = toCandidates(backups);
+  const calendarOf = (c: Candidate) => localCalendar(c.createdAt, timeZoneOffsetMinutes);
 
-    const prune = new Set<string>();
+  const daily = groupBy(
+    candidates.filter((c) => c.kind === "daily"),
+    (c) => dailyKey(calendarOf(c))
+  );
+  const weekly = groupBy(candidates.filter((c) => c.kind === "weekly"), (c) => weeklyKey(calendarOf(c)));
+  const monthly = groupBy(candidates.filter((c) => c.kind === "monthly"), (c) => monthlyKey(calendarOf(c)));
 
-    /** Keeps the newest `limit` period buckets; every other file is prunable. */
-    const applyLane = (buckets: Map<string, Candidate[]>, limit: number) => {
-      const effectiveLimit = Math.max(0, limit);
-      const keys = Array.from(buckets.keys()).sort().reverse(); // newest period first
-      keys.forEach((key, index) => {
-        const members = buckets.get(key) || [];
-        // candidates are newest-first, so members[0] is the period representative.
-        members.forEach((member, position) => {
-          if (ALWAYS_KEEP_KINDS.has(member.kind)) return;
-          // Older duplicates inside the same period are redundant, and the
-          // representative of an expired period is outside the retention window.
-          if (position > 0 || index >= effectiveLimit) prune.add(member.fileName);
-        });
+  const transactions = candidates.filter((c) => c.kind === "transaction");
+  const preRestore = candidates.filter((c) => c.kind === "pre-restore");
+  const preUpdate = candidates.filter((c) => c.kind === "pre-update");
+
+  const prune = new Set<string>();
+
+  /** Keeps the newest `limit` period buckets; every other file is prunable. */
+  const applyLane = (buckets: Map<string, Candidate[]>, limit: number) => {
+    const effectiveLimit = Math.max(0, limit);
+    const keys = Array.from(buckets.keys()).sort().reverse(); // newest period first
+    keys.forEach((key, index) => {
+      const members = buckets.get(key) || [];
+      // candidates are newest-first, so members[0] is the period representative.
+      members.forEach((member, position) => {
+        if (ALWAYS_KEEP_KINDS.has(member.kind)) return;
+        // Older duplicates inside the same period are redundant, and the
+        // representative of an expired period is outside the retention window.
+        if (position > 0 || index >= effectiveLimit) prune.add(member.fileName);
       });
-    };
+    });
+  };
 
-    applyLane(daily, policy.daily);
-    applyLane(weekly, policy.weekly);
-    applyLane(monthly, policy.monthly);
+  applyLane(daily, policy.daily);
+  applyLane(weekly, policy.weekly);
+  applyLane(monthly, policy.monthly);
 
-    // Invariant: the newest keepMinimum files of ANY kind are never pruned.
-    const newestProtected = candidates.slice(0, Math.max(0, policy.keepMinimum));
-    for (const c of newestProtected) prune.delete(c.fileName);
-
-    const keep = candidates
-      .filter((c) => ALWAYS_KEEP_KINDS.has(c.kind) || !prune.has(c.fileName))
-      .map((c) => c.fileName);
-
-    const pruneList = Array.from(prune)
-      .map((f) => candidates.find((c) => c.fileName === f)!)
-      .sort((a, b) => a.createdAtMs - b.createdAtMs) // delete oldest first
-      .map((c) => c.fileName);
-
-    return {
-      keep,
-      prune: pruneList,
-      buckets: {
-        daily: mapToRecord(daily),
-        weekly: mapToRecord(weekly),
-        monthly: mapToRecord(monthly),
-      },
-    };
+  // Bounded caps for transaction and safety backups (newest-first, prune oldest excess).
+  for (let i = MAX_TRANSACTION_BACKUPS; i < transactions.length; i++) {
+    prune.add(transactions[i].fileName);
+  }
+  for (let i = MAX_SAFETY_BACKUPS; i < preRestore.length; i++) {
+    prune.add(preRestore[i].fileName);
+  }
+  for (let i = MAX_SAFETY_BACKUPS; i < preUpdate.length; i++) {
+    prune.add(preUpdate[i].fileName);
   }
 
-  /** Kinds that are never deleted automatically (user's explicit safety net). */
-  const ALWAYS_KEEP_KINDS = new Set<BackupKind>(["manual", "transaction", "pre-update", "pre-restore"]);
+  // Invariant: the newest keepMinimum files of ANY kind are never pruned.
+  const newestProtected = candidates.slice(0, Math.max(0, policy.keepMinimum));
+  for (const c of newestProtected) prune.delete(c.fileName);
+
+  const keep = candidates
+    .filter((c) => ALWAYS_KEEP_KINDS.has(c.kind) || !prune.has(c.fileName))
+    .map((c) => c.fileName);
+
+  const pruneList = Array.from(prune)
+    .map((f) => candidates.find((c) => c.fileName === f)!)
+    .sort((a, b) => a.createdAtMs - b.createdAtMs) // delete oldest first
+    .map((c) => c.fileName);
+
+  return {
+    keep,
+    prune: pruneList,
+    buckets: {
+      daily: mapToRecord(daily),
+      weekly: mapToRecord(weekly),
+      monthly: mapToRecord(monthly),
+    },
+  };
+}
+
+/** Kinds that are never deleted automatically (user's explicit manual snapshots). */
+const ALWAYS_KEEP_KINDS = new Set<BackupKind>(["manual"]);
 
 function mapToRecord(map: Map<string, Candidate[]>): Record<string, string[]> {
   const out: Record<string, string[]> = {};

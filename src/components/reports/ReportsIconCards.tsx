@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/printCalculator";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 
 export type ReportTab =
   | "performance"
@@ -31,6 +32,7 @@ interface ReportCardItem {
 interface Props {
   activeTab: ReportTab;
   onSelectTab: (tab: ReportTab) => void;
+  currency?: AppCurrency;
   metrics: {
     netProfit: number;
     salesTotal: number;
@@ -40,13 +42,19 @@ interface Props {
   };
 }
 
-export function ReportsIconCards({ activeTab, onSelectTab, metrics }: Props) {
+export function ReportsIconCards({
+  activeTab,
+  onSelectTab,
+  currency = DEFAULT_CURRENCY,
+  metrics,
+}: Props) {
+  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
   const cards: ReportCardItem[] = [
     {
       id: "performance",
       title: "الأداء المالي",
       description: "الهوامش وصافي الربح",
-      badge: `${formatNumber(metrics.netProfit)} ج.س`,
+      badge: `${formatNumber(metrics.netProfit)} ${curLabel}`,
       icon: TrendingUp,
       gradient: "from-[#168063] to-[#22A07E]",
     },
@@ -54,7 +62,7 @@ export function ReportsIconCards({ activeTab, onSelectTab, metrics }: Props) {
       id: "sales",
       title: "المبيعات",
       description: "حجم الفواتير والمبيعات",
-      badge: `${formatNumber(metrics.salesTotal)} ج.س`,
+      badge: `${formatNumber(metrics.salesTotal)} ${curLabel}`,
       icon: Receipt,
       gradient: "from-blue-600 to-indigo-600",
     },
@@ -62,7 +70,7 @@ export function ReportsIconCards({ activeTab, onSelectTab, metrics }: Props) {
       id: "collections",
       title: "التحصيلات والذمم",
       description: "المحصل والديون القائمة",
-      badge: `${formatNumber(metrics.collectedTotal)} ج.س`,
+      badge: `${formatNumber(metrics.collectedTotal)} ${curLabel}`,
       icon: Wallet,
       gradient: "from-amber-500 to-orange-600",
     },
@@ -70,7 +78,7 @@ export function ReportsIconCards({ activeTab, onSelectTab, metrics }: Props) {
       id: "purchases",
       title: "المشتريات والتكاليف",
       description: "فواتير الموردين والإنتاج",
-      badge: `${formatNumber(metrics.purchasesTotal)} ج.س`,
+      badge: `${formatNumber(metrics.purchasesTotal)} ${curLabel}`,
       icon: Truck,
       gradient: "from-rose-500 to-red-600",
     },
@@ -78,7 +86,7 @@ export function ReportsIconCards({ activeTab, onSelectTab, metrics }: Props) {
       id: "cash",
       title: "الحركة النقدية",
       description: "التدفق النقدي والسيولة",
-      badge: `${formatNumber(metrics.cashNet)} ج.س`,
+      badge: `${formatNumber(metrics.cashNet)} ${curLabel}`,
       icon: ArrowLeftRight,
       gradient: "from-cyan-600 to-sky-700",
     },

@@ -254,6 +254,7 @@ public class BackupPlugin extends Plugin {
             out.put("ok", true);
             out.put("counts", database == null ? new JSONObject() : database.optJSONObject("counts"));
             out.put("invoiceCount", database == null ? 0 : database.optInt("invoiceCount", 0));
+            out.put("totalBusinessRecords", database == null ? 0 : database.optInt("totalBusinessRecords", 0));
             out.put("schemaVersion", database == null ? 0 : database.optInt("schemaVersion", 0));
             return out;
         });
@@ -357,6 +358,47 @@ public class BackupPlugin extends Plugin {
             }
             return out;
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Recovery Key & Pre-Update Backup
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @PluginMethod
+    public void exportRecoveryKey(PluginCall call) {
+        background(call, () -> new JSObject(engine().exportRecoveryKey().toString()));
+    }
+
+    @PluginMethod
+    public void importRecoveryKey(PluginCall call) {
+        final JSONObject options = optionsOf(call);
+        String code = call.getString("recoveryKey");
+        if (code == null || code.trim().isEmpty()) code = call.getString("code");
+        if (code == null || code.trim().isEmpty()) code = call.getString("key");
+        if (code == null || code.trim().isEmpty()) code = options.optString("recoveryKey", "");
+        if (code == null || code.trim().isEmpty()) code = options.optString("code", "");
+        if (code == null || code.trim().isEmpty()) code = options.optString("key", "");
+        final String finalCode = code == null ? "" : code.trim();
+        background(call, () -> new JSObject(engine().importRecoveryKey(finalCode).toString()));
+    }
+
+    @PluginMethod
+    public void getEncryptionInfo(PluginCall call) {
+        background(call, () -> new JSObject(engine().getEncryptionInfo().toString()));
+    }
+
+    @PluginMethod
+    public void preparePreUpdateBackup(PluginCall call) {
+        final JSONObject options = optionsOf(call);
+        String appVersion = call.getString("appVersion");
+        if (appVersion == null || appVersion.trim().isEmpty()) {
+            appVersion = options.optString("appVersion", "");
+        }
+        Integer targetSchemaObj = call.getInt("targetSchema");
+        int targetSchema = targetSchemaObj != null ? targetSchemaObj : options.optInt("targetSchema", 0);
+        final String finalAppVersion = appVersion;
+        final int finalTargetSchema = targetSchema;
+        background(call, () -> new JSObject(engine().preparePreUpdateBackup(finalAppVersion, finalTargetSchema).toString()));
     }
 
     private JSONObject optionsOf(PluginCall call) {

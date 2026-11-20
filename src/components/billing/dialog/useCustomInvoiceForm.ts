@@ -39,6 +39,8 @@ interface UseCustomInvoiceFormParams {
   onSaved?: (invoice: CustomInvoice) => void;
   initialCustomerId?: string | null;
   initialCustomer?: CustomerRecord | null;
+  initialSupplierId?: string | null;
+  initialSupplier?: { id: string; name: string; phone?: string } | null;
 }
 
 const DEFAULT_SALUTATION = "بعد التحية والاحترام ،،،،،،،،";
@@ -56,6 +58,8 @@ export function useCustomInvoiceForm({
   onSaved,
   initialCustomerId,
   initialCustomer,
+  initialSupplierId,
+  initialSupplier,
 }: UseCustomInvoiceFormParams) {
   const [activeTab, setActiveTab] = useState<"edit" | "preview">("edit");
   const [type, setType] = useState<CustomInvoiceType>(initialType);
@@ -132,12 +136,14 @@ export function useCustomInvoiceForm({
       setType(initialType);
       setSerial("");
       setSavedReference(undefined);
-      setSupplierId(null);
+      const prefilledSupplierId: string | null = initialSupplierId ?? initialSupplier?.id ?? null;
+      setSupplierId(prefilledSupplierId);
       setSupplierInvoiceNumber("");
       setDate(getLocalIsoDate());
 
       const prefilledCustomerId: string | null = initialCustomerId ?? initialCustomer?.id ?? null;
-      let prefilledPartyName = initialCustomer?.name ?? "";
+      let prefilledPartyName =
+        initialCustomer?.name ?? (initialType === "purchase" ? initialSupplier?.name ?? "" : "");
 
       if (prefilledCustomerId && !prefilledPartyName) {
         const found = getCustomersSnapshot().find((c) => c.id === prefilledCustomerId);
@@ -150,7 +156,7 @@ export function useCustomInvoiceForm({
       setPartyName(prefilledPartyName);
       setPartyEnName("");
       setAttn("");
-      setPhone(initialCustomer?.phone || undefined);
+      setPhone(initialCustomer?.phone || initialSupplier?.phone || undefined);
       setNotes(undefined);
       setDueDate(undefined);
       setDiscount(undefined);
@@ -177,7 +183,7 @@ export function useCustomInvoiceForm({
       }
     }
     setActiveTab("edit");
-  }, [open, invoiceToEdit, initialType, initialItems, initialCustomerId, initialCustomer]);
+  }, [open, invoiceToEdit, initialType, initialItems, initialCustomerId, initialCustomer, initialSupplierId, initialSupplier]);
 
   const effectiveLang = useMemo(
     () => detectInvoiceLanguage(language, partyName, partyEnName, items),

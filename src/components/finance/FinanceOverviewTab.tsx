@@ -1,5 +1,6 @@
 import React from "react";
 import { Plus, Receipt, TrendingUp, Wallet } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import type { CompanyProfitability } from "@/lib/domain/finance";
 import type {
@@ -15,6 +16,7 @@ interface FinanceOverviewTabProps {
   receivables: ReceivablesSummary | null;
   payables: PayablesSummary | null;
   openInvoices: OpenSalesInvoiceRow[];
+  currencyLabel?: string;
   onOpenReceiptDialog: (invoiceId: string | null) => void;
   onOpenSupplierDialog: () => void;
 }
@@ -24,30 +26,33 @@ export function FinanceOverviewTab({
   receivables,
   payables,
   openInvoices,
+  currencyLabel = "ج.س",
   onOpenReceiptDialog,
   onOpenSupplierDialog,
 }: FinanceOverviewTabProps) {
+  const fmt = (n: number) => `${formatNumber(n)} ${currencyLabel}`;
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <Card title="الربحية (مسجّلة)" icon={<TrendingUp className="h-3.5 w-3.5 text-primary" />}>
-        <Row label="الإيراد المُفوتر" value={formatNumber(profitability?.revenue ?? 0)} />
-        <Row label="تكاليف مباشرة" value={formatNumber(profitability?.directCosts ?? 0)} />
-        <Row label="هامش إجمالي" value={formatNumber(profitability?.grossMargin ?? 0)} strong />
-        <Row label="مصروفات تشغيلية" value={formatNumber(profitability?.operatingExpenses ?? 0)} />
-        <Row label="صافي الربح" value={formatNumber(profitability?.netProfit ?? 0)} strong />
+      <Card title={`الربحية (مسجّلة · ${currencyLabel})`} icon={<TrendingUp className="h-3.5 w-3.5 text-primary" />}>
+        <Row label="الإيراد المُفوتر" value={fmt(profitability?.revenue ?? 0)} />
+        <Row label="تكاليف مباشرة" value={fmt(profitability?.directCosts ?? 0)} />
+        <Row label="هامش إجمالي" value={fmt(profitability?.grossMargin ?? 0)} strong />
+        <Row label="مصروفات تشغيلية" value={fmt(profitability?.operatingExpenses ?? 0)} />
+        <Row label="صافي الربح" value={fmt(profitability?.netProfit ?? 0)} strong />
         <p className="pt-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
           الإيراد هو قيمة الفواتير الصادرة، وليس نقداً محصّلاً. النقد الفعلي المتاح أعلاه هو السيولة الجاهزة.
         </p>
       </Card>
 
-      <Card title="التحصيل والالتزامات" icon={<Wallet className="h-3.5 w-3.5 text-primary" />}>
-        <Row label="مُفوتر للعملاء" value={formatNumber(receivables?.invoiced ?? 0)} />
-        <Row label="محصّل فعلاً" value={formatNumber(receivables?.collected ?? 0)} />
-        <Row label="متبقي على العملاء" value={formatNumber(receivables?.outstanding ?? 0)} strong />
+      <Card title={`التحصيل والالتزامات (${currencyLabel})`} icon={<Wallet className="h-3.5 w-3.5 text-primary" />}>
+        <Row label="مُفوتر للعملاء" value={fmt(receivables?.invoiced ?? 0)} />
+        <Row label="محصّل فعلاً" value={fmt(receivables?.collected ?? 0)} />
+        <Row label="متبقي على العملاء" value={fmt(receivables?.outstanding ?? 0)} strong />
         <Row label="فواتير متأخرة" value={String(receivables?.overdueCount ?? 0)} />
-        <Row label="مشتريات الموردين" value={formatNumber(payables?.purchased ?? 0)} />
-        <Row label="مدفوع للموردين" value={formatNumber(payables?.paid ?? 0)} />
-        <Row label="مستحق للموردين" value={formatNumber(payables?.outstanding ?? 0)} strong />
+        <Row label="مشتريات الموردين" value={fmt(payables?.purchased ?? 0)} />
+        <Row label="مدفوع للموردين" value={fmt(payables?.paid ?? 0)} />
+        <Row label="مستحق للموردين" value={fmt(payables?.outstanding ?? 0)} strong />
         <div className="pt-2.5 flex items-center gap-2">
           <Button
             type="button"
@@ -88,7 +93,7 @@ export function FinanceOverviewTab({
         </div>
         {openInvoices.length === 0 ? (
           <p className="text-xs font-bold text-muted-foreground py-2">
-            لا توجد فواتير مبيعات مفتوحة حالياً — يمكنك تحصيل دفعة مقدّمة من أي عميل.
+            لا توجد فواتير مبيعات مفتوحة بهذه العملة حالياً — يمكنك تحصيل دفعة مقدّمة من أي عميل.
           </p>
         ) : (
           <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-card overflow-hidden">
@@ -103,7 +108,17 @@ export function FinanceOverviewTab({
                       {inv.reference || "—"}
                     </span>
                     <span className="mx-1.5 text-muted-foreground">·</span>
-                    <span>{inv.customerName || "عميل غير محدد"}</span>
+                    {inv.customerId ? (
+                      <Link
+                        to="/customers"
+                        search={{ id: inv.customerId }}
+                        className="hover:text-primary hover:underline transition-colors"
+                      >
+                        {inv.customerName || "عميل غير محدد"}
+                      </Link>
+                    ) : (
+                      <span>{inv.customerName || "عميل غير محدد"}</span>
+                    )}
                   </p>
                   <p className="text-[10.5px] text-muted-foreground mt-0.5">
                     {inv.date} · مدفوع {formatNumber(inv.settlement.paid)} من {formatNumber(inv.settlement.total)}{" "}

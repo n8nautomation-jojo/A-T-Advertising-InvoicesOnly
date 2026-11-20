@@ -1,14 +1,24 @@
 import { useEffect, useRef, type RefObject } from "react";
-import { X, AlertCircle } from "lucide-react";
-import type { useOrders } from "@/lib/ordersStore";
+import { X, AlertCircle, Clock, Receipt, ChevronLeft } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+
+export interface AppNotificationItem {
+  id: string;
+  severity: "urgent" | "warn";
+  kind: "overdue_invoice" | "open_invoice" | "unpaid_expense";
+  title: string;
+  subtitle: string;
+  to: "/finance" | "/expenses" | "/customers";
+  search?: { id?: string };
+}
 
 interface NotificationPanelProps {
-  urgentOrders: ReturnType<typeof useOrders>;
+  alerts: AppNotificationItem[];
   onClose: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
-export function NotificationPanel({ urgentOrders, onClose, triggerRef }: NotificationPanelProps) {
+export function NotificationPanel({ alerts, onClose, triggerRef }: NotificationPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,6 +40,8 @@ export function NotificationPanel({ urgentOrders, onClose, triggerRef }: Notific
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  const urgentCount = alerts.filter((a) => a.severity === "urgent").length;
+
   return (
     <div
       ref={panelRef}
@@ -37,7 +49,7 @@ export function NotificationPanel({ urgentOrders, onClose, triggerRef }: Notific
       role="dialog"
       aria-label="لوحة التنبيهات"
       className={[
-        "absolute left-0 top-full mt-2 w-[min(20rem,calc(100vw-2.5rem))] z-50",
+        "absolute left-0 top-full mt-2 w-[min(21rem,calc(100vw-2.5rem))] z-50",
         "rounded-2xl border border-border/80 bg-card",
         "shadow-float animate-slide-up",
         "overflow-hidden backdrop-blur-md",
@@ -51,12 +63,18 @@ export function NotificationPanel({ urgentOrders, onClose, triggerRef }: Notific
           <span
             className={[
               "rounded-full px-2 py-0.5 text-[10px] font-black",
-              urgentOrders.length > 0
+              urgentCount > 0
                 ? "bg-destructive/10 text-destructive"
+                : alerts.length > 0
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                 : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
             ].join(" ")}
           >
-            {urgentOrders.length > 0 ? `${urgentOrders.length} عاجل` : "كل شيء بخير ✓"}
+            {urgentCount > 0
+              ? `${urgentCount} متأخر`
+              : alerts.length > 0
+              ? `${alerts.length} للمتابعة`
+              : "كل شيء بخير ✓"}
           </span>
         </div>
         <button
@@ -69,24 +87,41 @@ export function NotificationPanel({ urgentOrders, onClose, triggerRef }: Notific
         </button>
       </div>
 
-      <div className="max-h-64 overflow-y-auto overscroll-contain">
-        {urgentOrders.length > 0 ? (
+      <div className="max-h-72 overflow-y-auto overscroll-contain">
+        {alerts.length > 0 ? (
           <div className="divide-y divide-border/40">
-            {urgentOrders.map((o) => (
-              <div
-                key={o.id}
-                className="flex items-start gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors"
+            {alerts.map((item) => (
+              <Link
+                key={item.id}
+                to={item.to}
+                search={item.search}
+                onClick={onClose}
+                className="flex items-start gap-3 px-4 py-3 hover:bg-secondary/40 transition-colors"
               >
-                <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-xl bg-destructive/10 text-destructive">
-                  <AlertCircle className="h-3.5 w-3.5" />
+                <span
+                  className={[
+                    "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-xl",
+                    item.severity === "urgent"
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                  ].join(" ")}
+                >
+                  {item.kind === "overdue_invoice" ? (
+                    <AlertCircle className="h-3.5 w-3.5" />
+                  ) : item.kind === "open_invoice" ? (
+                    <Clock className="h-3.5 w-3.5" />
+                  ) : (
+                    <Receipt className="h-3.5 w-3.5" />
+                  )}
                 </span>
-                <div className="min-w-0">
-                  <p className="text-xs font-black text-foreground">طلب #{o.orderNumber}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black text-foreground truncate">{item.title}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                    {o.customerName || "عميل غير محدد"}
+                    {item.subtitle}
                   </p>
                 </div>
-              </div>
+                <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-1.5" />
+              </Link>
             ))}
           </div>
         ) : (

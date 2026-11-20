@@ -272,7 +272,7 @@ describe("Scenario: creating invoices, backing up and restoring them", () => {
     state.db = null;
     const restored = await restoreBackup(list[0].fileName, "replace");
     expect(restored.ok).toBe(true);
-    expect(restored.safetyBackupId).toBeTruthy();
+    expect(restored.safetyBackupSkippedReason).toBe("empty-database");
     // Reattach the app-side handle to the restored file for the assertions below.
     state.db = FixtureDatabase.open({ dir: reinstallDir });
 

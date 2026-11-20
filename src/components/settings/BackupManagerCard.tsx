@@ -62,8 +62,10 @@ export function BackupManagerCard() {
     handleImportFile,
     handleRestore,
     handleSaveSettings,
+    handleExportRecoveryKey,
+    handleImportRecoveryKey,
   } = useBackupManagerActions({
-    folderUri: settings.folderUri,
+    folderUri: dashboard.storage?.folderUri || settings.folderUri,
     refresh: dashboard.refresh,
     fileInputRef,
     setIsRestoreHubOpen,
@@ -85,7 +87,7 @@ export function BackupManagerCard() {
 
       <BackupActionsCard
         busy={busy}
-        hasFolder={Boolean(dashboard.storage?.folderUri)}
+        hasFolder={Boolean(dashboard.storage?.folderUri || settings.folderUri)}
         backupCount={dashboard.backups.length}
         onBackupNow={handleBackupNow}
         onOpenRestoreHub={() => {
@@ -122,10 +124,12 @@ export function BackupManagerCard() {
         initialSelected={preSelectedBackup}
         backups={dashboard.backups}
         currentInvoiceCount={dashboard.database?.invoiceCount ?? 0}
+        currentBusinessRecordCount={dashboard.databaseBusinessRecordCount}
         currentSchemaVersion={dashboard.database?.schemaVersion ?? 1}
         busy={busy}
         onRestore={handleRestore}
         onImportExternal={() => fileInputRef.current?.click()}
+        onImportRecoveryKey={handleImportRecoveryKey}
         successResult={restoreSuccessResult}
         onCloseSuccess={() => {
           setIsRestoreHubOpen(false);
@@ -138,7 +142,11 @@ export function BackupManagerCard() {
         onOpenChange={setIsSettingsOpen}
         settings={settings}
         encryptionAvailable={dashboard.encryptionAvailable}
+        hasEncryptionKey={dashboard.hasEncryptionKey}
+        encryptionKeyId={dashboard.encryptionKeyId}
         onSave={handleSaveSettings}
+        onExportRecoveryKey={handleExportRecoveryKey}
+        onImportRecoveryKey={handleImportRecoveryKey}
       />
 
       <BackupHistoryDialog

@@ -25,8 +25,9 @@ import { V3_VERSION, applyV3 } from "./v3Finance";
 import { V4_VERSION, applyV4 } from "./v4Currency";
 import { V5_VERSION, applyV5 } from "./v5CustomerModule";
 import { V6_VERSION, applyV6MultiCurrency } from "./v6MultiCurrency";
+import { V7_VERSION, applyV7OfficialLetters } from "./v7OfficialLetters";
 
-export const SCHEMA_VERSION = V6_VERSION;
+export const SCHEMA_VERSION = V7_VERSION;
 
 export interface MigrationOutcome {
   from: number;
@@ -64,10 +65,15 @@ export async function getStoredSchemaVersion(db: MigrationDatabase): Promise<num
 async function setStoredSchemaVersion(db: MigrationDatabase, version: number, nowIso: string): Promise<void> {
   await db.run("INSERT OR REPLACE INTO db_meta(key, value) VALUES('schema_version', ?)", [String(version)]);
   await db.run("INSERT OR REPLACE INTO db_meta(key, value) VALUES('schema_migrated_at', ?)", [nowIso]);
+  const pragma = `PRAGMA user_version = ${Math.max(0, Math.trunc(version))};`;
   try {
-    await db.execute(`PRAGMA user_version = ${Math.max(0, Math.trunc(version))};`, false);
-  } catch (err) {
-    console.warn("[Migration] could not mirror user_version:", err);
+    await db.execute(pragma, false);
+  } catch {
+    try {
+      await db.query(pragma);
+    } catch (err) {
+      console.warn("[Migration] could not mirror user_version:", err);
+    }
   }
 }
 
@@ -170,13 +176,28 @@ export async function runPendingMigrations(
         await applyV3(db, nowIso);
       }
       const v6 = await applyV6MultiCurrency(db);
-      await setStoredSchemaVersion(db, SCHEMA_VERSION, nowIso);
+      await setStoredSchemaVersion(db, V6_VERSION, nowIso);
       outcome.applied.push(
         `v6 (multi-currency: columns=${v6.columnsAdded.length}, indexes=${v6.indexesCreated}, backfilled=${v6.backfilledRows})`
       );
     } catch (err) {
+      haltUpgrade = true;
       outcome.warnings.push(`v6: ${String(err)}`);
       console.error("[Migration] v6 failed; version left unchanged for a retry:", err);
+    }
+  }
+
+  if (!haltUpgrade && outcome.from < V7_VERSION) {
+    try {
+      const v7 = await applyV7OfficialLetters(db, nowIso);
+      await setStoredSchemaVersion(db, V7_VERSION, nowIso);
+      outcome.applied.push(
+        `v7 (official_letters: ready=${v7.tableReady}, migrated=${v7.migratedLetters})`
+      );
+    } catch (err) {
+      haltUpgrade = true;
+      outcome.warnings.push(`v7: ${String(err)}`);
+      console.error("[Migration] v7 failed; version left unchanged for a retry:", err);
     }
   }
 
@@ -196,5 +217,5 @@ export async function backfillReferencesOnly(
   return report;
 }
 
-export { V2_VERSION, V3_VERSION, V4_VERSION, V5_VERSION, V6_VERSION };
+export { V2_VERSION, V3_VERSION, V4_VERSION, V5_VERSION, V6_VERSION, V7_VERSION };
 export type { MigrationDatabase };

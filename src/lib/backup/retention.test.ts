@@ -1,9 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { localCalendar, dailyKey, weeklyKey, monthlyKey, planRetention, shouldCreateScheduledBackup } from "@/lib/backup/retention";
+import {
+  localCalendar,
+  dailyKey,
+  weeklyKey,
+  monthlyKey,
+  planRetention,
+  shouldCreateScheduledBackup,
+  MAX_TRANSACTION_BACKUPS,
+  MAX_SAFETY_BACKUPS,
+} from "@/lib/backup/retention";
 import {
   assessProtection,
+  countBusinessRecords,
   decideDiscovery,
   newestVerified,
+  newestWithData,
   validateManifest,
   evaluateBackupFile,
   isSchemaCompatible,
@@ -132,6 +143,36 @@ describe("Retention planner", () => {
     const months = new Set(monthlyFiles.map((f) => monthlyKey(localCalendar(f.manifest!.createdAt, UTC))));
     expect(planRetention(monthlyFiles, POLICY, UTC).prune.length).toBe(months.size - 12);
   });
+
+  it("caps transaction backups at MAX_TRANSACTION_BACKUPS (10) and safety backups at MAX_SAFETY_BACKUPS (5) while keeping all manual backups", () => {
+    const txFiles = Array.from({ length: MAX_TRANSACTION_BACKUPS + 4 }, (_, i) =>
+      file("transaction", `2026-11-${String(i + 1).padStart(2, "0")}T10:00:00.000Z`, `tx${i + 1}`)
+    );
+    const preRestoreFiles = Array.from({ length: MAX_SAFETY_BACKUPS + 3 }, (_, i) =>
+      file("pre-restore", `2026-10-${String(i + 1).padStart(2, "0")}T10:00:00.000Z`, `pr${i + 1}`)
+    );
+    const preUpdateFiles = Array.from({ length: MAX_SAFETY_BACKUPS + 2 }, (_, i) =>
+      file("pre-update", `2026-09-${String(i + 1).padStart(2, "0")}T10:00:00.000Z`, `pu${i + 1}`)
+    );
+    const manualFiles = Array.from({ length: 15 }, (_, i) =>
+      file("manual", `2026-08-${String(i + 1).padStart(2, "0")}T10:00:00.000Z`, `man${i + 1}`)
+    );
+
+    const plan = planRetention([...txFiles, ...preRestoreFiles, ...preUpdateFiles, ...manualFiles], POLICY, UTC);
+
+    // Excess transaction backups pruned (oldest 4)
+    expect(plan.prune).toContain("ta-backup-tx1.tabk");
+    expect(plan.prune).toContain("ta-backup-tx4.tabk");
+    expect(plan.prune).not.toContain("ta-backup-tx5.tabk");
+    expect(plan.keep.filter((n) => n.includes("-tx")).length).toBe(MAX_TRANSACTION_BACKUPS);
+
+    // Excess pre-restore & pre-update pruned
+    expect(plan.keep.filter((n) => n.includes("-pr")).length).toBe(MAX_SAFETY_BACKUPS);
+    expect(plan.keep.filter((n) => n.includes("-pu")).length).toBe(MAX_SAFETY_BACKUPS);
+
+    // Manual snapshots are NEVER pruned
+    expect(plan.keep.filter((n) => n.includes("-man")).length).toBe(15);
+  });
 });
 
 describe("Scheduled backup de-duplication", () => {
@@ -214,6 +255,40 @@ describe("Discovery & recovery decision", () => {
     const decision = decideDiscovery({ storage, backups: files, currentInvoiceCount: 50, settings }, now);
     expect(decision.shouldPrompt).toBe(false);
     expect(decision.reason).toBe("nothing-to-recover");
+  });
+
+  it("discovers and prompts for a backup containing only customers & official_letters (0 invoices)", () => {
+    const emptyPreUpdate: BackupFileInfo = {
+      ...file("pre-update", "2026-11-11T09:30:00.000Z", "empty-pre"),
+      manifest: manifest({
+        kind: "pre-update",
+        createdAt: "2026-11-11T09:30:00.000Z",
+        backupId: "empty-pre",
+        invoiceCount: 0,
+        totalBusinessRecords: 0,
+        counts: {},
+      }),
+    };
+    const lettersOnlyBackup: BackupFileInfo = {
+      ...file("manual", "2026-06-01T09:00:00.000Z", "letters-only"),
+      manifest: manifest({
+        kind: "manual",
+        createdAt: "2026-06-01T09:00:00.000Z",
+        backupId: "letters-only",
+        invoiceCount: 0,
+        totalBusinessRecords: 5,
+        counts: { customers: 2, official_letters: 3 },
+      }),
+    };
+    expect(countBusinessRecords(lettersOnlyBackup.manifest!.counts)).toBe(5);
+    expect(newestWithData([emptyPreUpdate, lettersOnlyBackup])?.manifest?.backupId).toBe("letters-only");
+
+    const decision = decideDiscovery(
+      { storage, backups: [emptyPreUpdate, lettersOnlyBackup], currentInvoiceCount: 0, currentBusinessRecordCount: 0, settings },
+      now
+    );
+    expect(decision.shouldPrompt).toBe(true);
+    expect(decision.newest?.manifest?.backupId).toBe("letters-only");
   });
 });
 
@@ -321,5 +396,61 @@ describe("Protection assessment", () => {
     });
     expect(r.status).toBe("outdated");
     expect(r.reason).toContain("disk full");
+  });
+
+  it("transitions to unproven when non-invoice business records (customers/letters/payments) or lastDataChangeAt outpace the newest backup", () => {
+    const files: BackupFileInfo[] = [
+      {
+        ...file("daily", "2026-11-11T08:00:00.000Z", "synced"),
+        manifest: manifest({
+          backupId: "synced",
+          createdAt: "2026-11-11T08:00:00.000Z",
+          invoiceCount: 3,
+          totalBusinessRecords: 6,
+          counts: { custom_invoices: 3, customers: 2, official_letters: 1 },
+        }),
+      },
+    ];
+    expect(
+      assessProtection({ storage, backups: files, settings, databaseInvoiceCount: 3, databaseBusinessRecordCount: 6, now }).status
+    ).toBe("protected");
+
+    // Adding 1 official letter (still 3 invoices, now 7 business records) -> unproven
+    const addedLetter = assessProtection({
+      storage,
+      backups: files,
+      settings,
+      databaseInvoiceCount: 3,
+      databaseBusinessRecordCount: 7,
+      now,
+    });
+    expect(addedLetter.status).toBe("unproven");
+    expect(addedLetter.reason).toContain("7");
+
+    // In-place edit (same counts, newer lastDataChangeAt) -> unproven
+    const edited = assessProtection({
+      storage,
+      backups: files,
+      settings: { ...settings, lastDataChangeAt: "2026-11-11T08:05:00.000Z" },
+      databaseInvoiceCount: 3,
+      databaseBusinessRecordCount: 6,
+      now,
+    });
+    expect(edited.status).toBe("unproven");
+
+    // Newer native WorkManager failure overrides stale settings "ok"
+    const nativeFail = assessProtection({
+      storage,
+      backups: files,
+      settings: { ...settings, lastBackupStatus: "ok", lastBackupAt: "2026-11-11T08:00:00.000Z" },
+      databaseInvoiceCount: 3,
+      databaseBusinessRecordCount: 6,
+      nativeLastBackupAt: "2026-11-11T09:00:00.000Z",
+      nativeLastBackupStatus: "failed",
+      nativeLastBackupMessage: "permission denied",
+      now,
+    });
+    expect(nativeFail.status).toBe("outdated");
+    expect(nativeFail.reason).toContain("permission denied");
   });
 });

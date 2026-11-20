@@ -24,6 +24,12 @@ import { getAllSuppliers, type Supplier } from "@/lib/repositories/SupplierRepos
 import { createExpense, payExpense, EXPENSE_KIND_LABELS, type Expense, type ExpenseKind } from "@/lib/repositories/ExpenseRepository";
 import { PAYMENT_METHOD_LABELS, type FinancialAccount, type PaymentMethod } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import {
+  CURRENCY_LIST,
+  DEFAULT_CURRENCY,
+  SUPPORTED_CURRENCIES,
+  type AppCurrency,
+} from "@/lib/currency/types";
 import { sanitizePositiveDecimal } from "./shared/numericInput";
 
 interface Props {
@@ -31,6 +37,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** عند تمرير مصروف: النافذة تسجّل سداداً بدل إنشاء مصروف جديد */
   settleExpense?: Expense | null;
+  defaultCurrency?: AppCurrency;
   onSaved?: () => void;
 }
 
@@ -38,12 +45,19 @@ interface Props {
  * مصروف جديد (مباشر أو تشغيلي) أو سداد مصروف قائم.
  * التسجيل لا يعني الدفع، والسداد هو ما يحرّك النقد فعلاً (PRD §7.5).
  */
-export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Props) {
+export function ExpenseDialog({
+  open,
+  onOpenChange,
+  settleExpense,
+  defaultCurrency = DEFAULT_CURRENCY,
+  onSaved,
+}: Props) {
   const isSettlement = Boolean(settleExpense);
 
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [kind, setKind] = useState<ExpenseKind>("direct");
+  const [currency, setCurrency] = useState<AppCurrency>(defaultCurrency);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [beneficiary, setBeneficiary] = useState("");
   const [category, setCategory] = useState("");
@@ -54,6 +68,14 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
   const [accountId, setAccountId] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [busy, setBusy] = useState(false);
+
+  const activeCurrency: AppCurrency = settleExpense?.currency ?? currency;
+  const currencyLabel =
+    activeCurrency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[activeCurrency]?.symbol ?? activeCurrency;
+  const matchingAccounts = settleExpense
+    ? accounts.filter((a) => (a.currency ?? "SDG") === settleExpense.currency)
+    : accounts;
+  const selectableAccounts = matchingAccounts.length > 0 ? matchingAccounts : accounts;
 
   useEffect(() => {
     if (!open) return;
@@ -68,8 +90,12 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
         if (cancelled) return;
         setAccounts(accountList);
         setSuppliers(supplierList);
+        const preferred = settleExpense
+          ? accountList.filter((a) => (a.currency ?? "SDG") === settleExpense.currency)
+          : accountList;
+        const pool = preferred.length > 0 ? preferred : accountList;
         setAccountId((current) =>
-          current && accountList.some((a) => a.id === current) ? current : accountList[0]?.id || ""
+          current && pool.some((a) => a.id === current) ? current : pool[0]?.id || ""
         );
       } catch (err) {
         if (!cancelled) {
@@ -82,11 +108,13 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
     const today = getLocalIsoDate();
     if (settleExpense) {
       setAmount(String(settleExpense.amount));
+      setCurrency(settleExpense.currency);
       setExpenseDate(today);
       setMethod("cash");
       setNotes("");
     } else {
       setKind("direct");
+      setCurrency(defaultCurrency);
       setSupplierId(null);
       setBeneficiary("");
       setCategory("");
@@ -99,7 +127,7 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
     return () => {
       cancelled = true;
     };
-  }, [open, settleExpense]);
+  }, [open, settleExpense, defaultCurrency]);
 
   const handleSave = async () => {
     const value = Number(amount) || 0;
@@ -124,7 +152,7 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
           accountId,
           notes: notes.trim() || undefined,
         });
-        toast.success(`تم تسجيل السداد ${payment.reference} بمبلغ ${formatNumber(payment.amount)} ج.س`);
+        toast.success(`تم تسجيل السداد ${payment.reference} بمبلغ ${formatNumber(payment.amount)} ${currencyLabel}`);
       } else {
         const expense = await createExpense(
           {
@@ -133,6 +161,7 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
             beneficiary: beneficiary.trim() || undefined,
             category: category.trim() || undefined,
             amount: value,
+            currency,
             expenseDate: expenseDate || getLocalIsoDate(),
             evidenceRef: evidenceRef.trim() || undefined,
             notes: notes.trim() || undefined,
@@ -140,7 +169,7 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
           new Date().toISOString()
         );
         toast.success(
-          `تم تسجيل ${EXPENSE_KIND_LABELS[expense.kind]} بمبلغ ${formatNumber(expense.amount)} ج.س — لم يُسدَّد بعد`
+          `تم تسجيل ${EXPENSE_KIND_LABELS[expense.kind]} بمبلغ ${formatNumber(expense.amount)} ${currencyLabel} — لم يُسدَّد بعد`
         );
       }
       await notifyFinanceUpdated();
@@ -170,8 +199,8 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
                   {settleExpense.beneficiary || settleExpense.category || "مصروف"}
                 </p>
                 <p className="text-muted-foreground">
-                  {EXPENSE_KIND_LABELS[settleExpense.kind]} · قيمة المصروف {formatNumber(settleExpense.amount)} ج.س ·{" "}
-                  {settleExpense.expenseDate}
+                  {EXPENSE_KIND_LABELS[settleExpense.kind]} · قيمة المصروف {formatNumber(settleExpense.amount)}{" "}
+                  {currencyLabel} · {settleExpense.expenseDate}
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -222,9 +251,9 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
                     </SelectTrigger>
                     <SelectContent dir="rtl">
                       <SelectItem value="__none__">— اختر الحساب —</SelectItem>
-                      {accounts.map((item) => (
+                      {selectableAccounts.map((item) => (
                         <SelectItem key={item.id} value={item.id}>
-                          {item.name}
+                          {item.name} ({!item.currency || item.currency === "SDG" ? "ج.س" : item.currency})
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -244,16 +273,35 @@ export function ExpenseDialog({ open, onOpenChange, settleExpense, onSaved }: Pr
           ) : (
             <>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-black text-foreground">نوع المصروف</label>
-                <Select value={kind} onValueChange={(v) => setKind(v as ExpenseKind)}>
-                  <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl">
-                    <SelectItem value="direct">{EXPENSE_KIND_LABELS.direct}</SelectItem>
-                    <SelectItem value="operating">{EXPENSE_KIND_LABELS.operating}</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-black text-foreground">نوع المصروف</label>
+                    <Select value={kind} onValueChange={(v) => setKind(v as ExpenseKind)}>
+                      <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent dir="rtl">
+                        <SelectItem value="direct">{EXPENSE_KIND_LABELS.direct}</SelectItem>
+                        <SelectItem value="operating">{EXPENSE_KIND_LABELS.operating}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-black text-foreground">العملة</label>
+                    <Select value={currency} onValueChange={(v) => setCurrency(v as AppCurrency)}>
+                      <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent dir="rtl">
+                        {CURRENCY_LIST.map((cur) => (
+                          <SelectItem key={cur.code} value={cur.code}>
+                            {cur.flag} {cur.code} ({cur.nameAr})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <p className="text-[10px] leading-snug text-muted-foreground">
                   التكلفة المباشرة تخص التنفيذ والإنتاج، والمصروف التشغيلي يخص المصروفات التشغيلية العامة للشركة — ولا يُخلطان في أي حساب.
                 </p>

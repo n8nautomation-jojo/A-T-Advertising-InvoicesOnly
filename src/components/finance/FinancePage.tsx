@@ -43,6 +43,8 @@ import {
 } from "@/lib/domain/finance";
 import { notifyFinanceUpdated, refreshSettlements } from "@/lib/financeStore";
 import { formatNumber } from "@/lib/printCalculator";
+import { CurrencySelector } from "@/components/currency/CurrencySelector";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 import { ReceiptDialog } from "./ReceiptDialog";
 import { SupplierPaymentDialog } from "./SupplierPaymentDialog";
 import { TransferDialog } from "./TransferDialog";
@@ -65,6 +67,7 @@ type FinanceTab = "overview" | "accounts" | "receipts" | "payments" | "ledger";
 export function FinancePage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<FinanceTab>("overview");
+  const [currency, setCurrency] = useState<AppCurrency>(DEFAULT_CURRENCY);
   const [accounts, setAccounts] = useState<AccountBalanceReport[]>([]);
   const [cash, setCash] = useState<CashSummary | null>(null);
   const [receivables, setReceivables] = useState<ReceivablesSummary | null>(null);
@@ -83,11 +86,15 @@ export function FinancePage() {
 
   const [newAccountName, setNewAccountName] = useState("");
   const [newAccountKind, setNewAccountKind] = useState<AccountKind>("bank");
+  const [newAccountCurrency, setNewAccountCurrency] = useState<AppCurrency>(DEFAULT_CURRENCY);
   const [creatingAccount, setCreatingAccount] = useState(false);
 
   const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
+
+  const currencyLabel =
+    currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,14 +111,14 @@ export function FinancePage() {
         openSales,
       ] = await Promise.all([
         getAccountBalances(),
-        getCashSummary(),
-        getReceivablesSummary(),
-        getPayablesSummary(),
-        getCompanyProfitability(),
-        getMoneyMovements(60),
-        getCustomerReceipts(60),
-        getSupplierPayments(60),
-        getOpenSalesInvoices(100),
+        getCashSummary(currency),
+        getReceivablesSummary(undefined, currency),
+        getPayablesSummary(currency),
+        getCompanyProfitability(currency),
+        getMoneyMovements(60, currency),
+        getCustomerReceipts(60, currency),
+        getSupplierPayments(60, currency),
+        getOpenSalesInvoices(100, currency),
       ]);
       if (accountReports.length === 0) {
         await getDefaultAccountId();
@@ -132,7 +139,7 @@ export function FinancePage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     void load();
@@ -160,7 +167,11 @@ export function FinancePage() {
     }
     setCreatingAccount(true);
     try {
-      await createAccount({ name: newAccountName, kind: newAccountKind });
+      await createAccount({
+        name: newAccountName,
+        kind: newAccountKind,
+        currency: newAccountCurrency,
+      });
       setNewAccountName("");
       toast.success("تم إنشاء الحساب المالي");
       await notifyFinanceUpdated();
@@ -226,18 +237,29 @@ export function FinancePage() {
               </div>
             </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void load()}
-              disabled={loading}
-              aria-label="تحديث"
-              className="h-9 px-3 rounded-xl gap-1.5 text-xs font-bold text-muted-foreground self-end sm:self-center"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-              <span>تحديث</span>
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap self-end sm:self-center">
+              <CurrencySelector
+                label="العملة:"
+                dropdownTitle="اختر عملة العرض"
+                value={currency}
+                onChange={(c) => {
+                  setCurrency(c);
+                  setNewAccountCurrency(c);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void load()}
+                disabled={loading}
+                aria-label="تحديث"
+                className="h-8 px-3 rounded-xl gap-1.5 text-xs font-bold text-muted-foreground"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                <span>تحديث</span>
+              </Button>
+            </div>
           </div>
 
           {/* 2. ثلاث مقاييس منفصلة كما تفرضه المواصفات — لا دمج */}
@@ -245,6 +267,7 @@ export function FinancePage() {
             <Metric
               label="النقد الفعلي المتاح"
               value={formatNumber(cash?.liquidity ?? 0)}
+              currencyLabel={currencyLabel}
               tone="primary"
               icon={<Wallet className="h-3.5 w-3.5" />}
               className="col-span-2 sm:col-span-1"
@@ -253,12 +276,14 @@ export function FinancePage() {
             <Metric
               label="ذمم العملاء (لك)"
               value={formatNumber(receivables?.outstanding ?? 0)}
+              currencyLabel={currencyLabel}
               tone="warn"
               onClick={() => setActiveTab("receipts")}
             />
             <Metric
               label="مستحق للموردين (عليك)"
               value={formatNumber(payables?.outstanding ?? 0)}
+              currencyLabel={currencyLabel}
               tone="danger"
               onClick={() => setActiveTab("payments")}
             />
@@ -335,6 +360,7 @@ export function FinancePage() {
                     receivables={receivables}
                     payables={payables}
                     openInvoices={openInvoices}
+                    currencyLabel={currencyLabel}
                     onOpenReceiptDialog={openReceiptDialog}
                     onOpenSupplierDialog={() => setSupplierOpen(true)}
                   />
@@ -347,6 +373,8 @@ export function FinancePage() {
                     setNewAccountName={setNewAccountName}
                     newAccountKind={newAccountKind}
                     setNewAccountKind={setNewAccountKind}
+                    newAccountCurrency={newAccountCurrency}
+                    setNewAccountCurrency={setNewAccountCurrency}
                     creatingAccount={creatingAccount}
                     onCreateAccount={() => void handleCreateAccount()}
                   />

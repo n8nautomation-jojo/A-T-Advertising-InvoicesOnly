@@ -6,15 +6,23 @@ import type {
 } from "@/lib/repositories/ReportsRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { cn } from "@/lib/utils";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 
 interface Props {
   type: "sales" | "collections";
   sales: SalesPerformance | null;
   collections: CustomerCollectionsReport | null;
+  currency?: AppCurrency;
 }
 
-export function ReportsSalesCollectionsView({ type, sales, collections }: Props) {
-  const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ج.س`;
+export function ReportsSalesCollectionsView({
+  type,
+  sales,
+  collections,
+  currency = DEFAULT_CURRENCY,
+}: Props) {
+  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ${curLabel}`;
 
   if (type === "sales") {
     return (
@@ -162,7 +170,7 @@ export function ReportsSalesCollectionsView({ type, sales, collections }: Props)
                   </p>
                 </div>
                 <span className="shrink-0 font-black tabular-nums text-emerald-600 dark:text-emerald-400">
-                  +{formatNumber(p.amount)} ج.س
+                  +{formatNumber(p.amount)} {curLabel}
                 </span>
               </div>
             ))}
@@ -215,7 +223,7 @@ export function ReportsSalesCollectionsView({ type, sales, collections }: Props)
                     inv.overdue ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"
                   )}
                 >
-                  {formatNumber(inv.settlement.outstanding)} ج.س
+                  {formatNumber(inv.settlement.outstanding)} {curLabel}
                 </span>
               </div>
             ))}

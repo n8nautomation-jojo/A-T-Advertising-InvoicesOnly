@@ -29,6 +29,8 @@ interface Props {
   onSaved?: (invoice: CustomInvoice) => void;
   initialCustomerId?: string | null;
   initialCustomer?: CustomerRecord | null;
+  initialSupplierId?: string | null;
+  initialSupplier?: { id: string; name: string; phone?: string } | null;
 }
 
 /**
@@ -46,6 +48,8 @@ export function CustomInvoiceDialog({
   onSaved,
   initialCustomerId,
   initialCustomer,
+  initialSupplierId,
+  initialSupplier,
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -65,6 +69,8 @@ export function CustomInvoiceDialog({
     onSaved,
     initialCustomerId,
     initialCustomer,
+    initialSupplierId,
+    initialSupplier,
   });
 
   return (

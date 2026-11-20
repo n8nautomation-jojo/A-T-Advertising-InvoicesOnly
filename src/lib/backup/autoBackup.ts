@@ -17,10 +17,14 @@
  */
 
 import { Capacitor } from "@capacitor/core";
+import { App as CapApp } from "@capacitor/app";
 import { getDb } from "@/lib/database";
 import { backupBridge, isBackupEngineAvailable } from "./bridge";
 import { getBackupSettingsSnapshot, loadBackupSettings, recordBackupRun } from "./settingsStore";
 import type { BackupKind, BackupRunResult } from "./types";
+
+const MIN_TRAILING_DEBOUNCE_MS = 5_000;
+const MAX_TRAILING_WAIT_MS = 60_000;
 
 /**
  * Flush committed SQLCipher WAL frames into the main .db file before the native
@@ -46,10 +50,32 @@ export async function flushWalBeforeBackup(mode: "passive" | "truncate" = "passi
 
 let running = false;
 let queued = false;
+let hasPendingChanges = false;
 let lastAttemptAt = 0;
+let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+let appPauseListenerRegistered = false;
 
 type Listener = (result: BackupRunResult) => void;
 const listeners = new Set<Listener>();
+
+function clearTrailingTimer(): void {
+  if (trailingTimer !== null) {
+    clearTimeout(trailingTimer);
+    trailingTimer = null;
+  }
+}
+
+function scheduleTrailingBackup(delayMs: number, reason: string): void {
+  clearTrailingTimer();
+  const boundedDelay = Math.max(MIN_TRAILING_DEBOUNCE_MS, delayMs);
+  trailingTimer = setTimeout(() => {
+    trailingTimer = null;
+    if (!hasPendingChanges) return;
+    void runQueue("transaction", reason, true).catch((err) => {
+      console.warn("[AutoBackup] trailing backup failed:", err);
+    });
+  }, boundedDelay);
+}
 
 /** UI can subscribe to background results (dashboard toast / badge). */
 export function subscribeBackupRuns(fn: Listener): () => void {
@@ -76,19 +102,35 @@ export function isBackupRunning(): boolean {
 export function resetAutoBackupStateForTests(): void {
   running = false;
   queued = false;
+  hasPendingChanges = false;
   lastAttemptAt = 0;
+  clearTrailingTimer();
+  appPauseListenerRegistered = false;
   listeners.clear();
 }
 
 /**
  * Main entry point for mutation-triggered backups.
- * Safe to call on every invoice save.
+ * Safe to call on every invoice/record save: uses a leading + trailing
+ * debounce scheduler so rapid bursts coalesce without ever dropping changes.
  */
 export function triggerBackupAfterTransaction(reason = "transaction"): void {
   if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable()) return;
-  void runQueue("transaction", reason).catch((err) => {
+  hasPendingChanges = true;
+  void runQueue("transaction", reason, false).catch((err) => {
     console.warn("[AutoBackup] trigger failed:", err);
   });
+}
+
+/**
+ * Immediately flushes any pending transaction-triggered backup (bypassing the
+ * throttle window). Invoked automatically when the app moves to background.
+ */
+export async function flushPendingTransactionBackup(): Promise<BackupRunResult | null> {
+  if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable()) return null;
+  if (!hasPendingChanges) return null;
+  clearTrailingTimer();
+  return runQueue("transaction", "app-pause", true);
 }
 
 /**
@@ -105,17 +147,30 @@ export function shouldAttemptTransactionBackup(
   return now - lastAttempt >= Math.max(1, throttleMinutes) * 60_000;
 }
 
-async function runQueue(kind: BackupKind, reason: string): Promise<void> {
+async function runQueue(kind: BackupKind, reason: string, bypassThrottle: boolean): Promise<BackupRunResult | null> {
   if (running) {
     queued = true;
-    return;
+    return null;
   }
   await loadBackupSettings();
   const settings = getBackupSettingsSnapshot();
   if (kind === "transaction") {
-    if (!settings.afterTransaction) return;
+    if (!settings.afterTransaction) {
+      hasPendingChanges = false;
+      clearTrailingTimer();
+      return null;
+    }
     const now = Date.now();
-    if (!shouldAttemptTransactionBackup(now, lastAttemptAt, settings.transactionThrottleMinutes, true)) return;
+    if (!bypassThrottle && !shouldAttemptTransactionBackup(now, lastAttemptAt, settings.transactionThrottleMinutes, true)) {
+      const throttleMs = Math.max(1, settings.transactionThrottleMinutes) * 60_000;
+      const remainingMs = Math.max(0, throttleMs - (now - lastAttemptAt));
+      const delayMs = Math.max(MIN_TRAILING_DEBOUNCE_MS, Math.min(remainingMs, MAX_TRAILING_WAIT_MS));
+      if (trailingTimer === null) {
+        scheduleTrailingBackup(delayMs, reason);
+      }
+      return null;
+    }
+    clearTrailingTimer();
     lastAttemptAt = now;
   }
 
@@ -131,24 +186,32 @@ async function runQueue(kind: BackupKind, reason: string): Promise<void> {
     });
     const nowIso = new Date().toISOString();
     if (result.ok) {
+      if (!queued) {
+        hasPendingChanges = false;
+        clearTrailingTimer();
+      }
       await recordBackupRun("ok", nowIso, null);
-      emit({ ...result, message: "تم حفظ نسخة احتياطية تلقائية (" + reason + ")" });
+      const emitted: BackupRunResult = { ...result, message: "تم حفظ نسخة احتياطية تلقائية (" + reason + ")" };
+      emit(emitted);
+      return emitted;
     } else {
       await recordBackupRun("failed", nowIso, result.message ?? result.errorCode ?? "خطأ غير معروف");
       emit(result);
+      return result;
     }
   } catch (err: unknown) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     const message = rawMsg === "NATIVE_UNAVAILABLE" ? "وحدة النسخ الاحتياطي غير متوفرة في هذه النسخة." : rawMsg;
     await recordBackupRun("failed", new Date().toISOString(), message);
-    emit({ ok: false, errorCode: "IO_FAILED", message });
+    const failed: BackupRunResult = { ok: false, errorCode: "IO_FAILED", message };
+    emit(failed);
+    return failed;
   } finally {
     running = false;
     if (queued) {
       queued = false;
-      setTimeout(() => {
-        void runQueue("transaction", "queued");
-      }, 1500);
+      hasPendingChanges = true;
+      scheduleTrailingBackup(MIN_TRAILING_DEBOUNCE_MS, "queued");
     }
   }
 }
@@ -171,8 +234,16 @@ export async function createManualBackup(): Promise<BackupRunResult> {
     const settings = getBackupSettingsSnapshot();
     const result = await backupBridge.createBackup("manual", { skipIfUnchanged: false, encrypt: settings.encryptionEnabled });
     const nowIso = new Date().toISOString();
-    if (result.ok) await recordBackupRun("ok", nowIso, null);
-    else await recordBackupRun("failed", nowIso, result.message ?? result.errorCode ?? "خطأ غير معروف");
+    if (result.ok) {
+      lastAttemptAt = Date.now();
+      if (!queued) {
+        hasPendingChanges = false;
+        clearTrailingTimer();
+      }
+      await recordBackupRun("ok", nowIso, null);
+    } else {
+      await recordBackupRun("failed", nowIso, result.message ?? result.errorCode ?? "خطأ غير معروف");
+    }
     return result;
   } catch (err: unknown) {
     const rawMsg = err instanceof Error ? err.message : String(err);
@@ -186,10 +257,22 @@ export async function createManualBackup(): Promise<BackupRunResult> {
 
 /**
  * Ensures the daily schedule exists (idempotent; WorkManager de-duplicates by
- * unique work name). Called once at app start.
+ * unique work name) and attaches the app-pause flush listener once. Called at app start
+ * and after restoring a backup.
  */
 export async function ensureScheduledBackups(): Promise<void> {
   if (!isBackupEngineAvailable()) return;
+  if (!appPauseListenerRegistered && Capacitor.isNativePlatform()) {
+    appPauseListenerRegistered = true;
+    void CapApp.addListener("appStateChange", ({ isActive }) => {
+      if (!isActive) {
+        void flushPendingTransactionBackup();
+      }
+    }).catch((err) => {
+      appPauseListenerRegistered = false;
+      console.warn("[AutoBackup] could not register appStateChange listener:", err);
+    });
+  }
   try {
     await loadBackupSettings();
     const settings = getBackupSettingsSnapshot();

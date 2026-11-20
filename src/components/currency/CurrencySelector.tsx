@@ -12,6 +12,8 @@ interface Props {
   value?: AppCurrency;
   onChange: (currency: AppCurrency) => void;
   locale?: "ar" | "en";
+  label?: string;
+  dropdownTitle?: string;
   className?: string;
   disabled?: boolean;
 }
@@ -23,6 +25,8 @@ export function CurrencySelector({
   value = DEFAULT_CURRENCY,
   onChange,
   locale = "ar",
+  label,
+  dropdownTitle,
   className = "",
   disabled = false,
 }: Props) {
@@ -56,6 +60,8 @@ export function CurrencySelector({
   };
 
   const isRtl = locale === "ar";
+  const resolvedLabel = label !== undefined ? label : isRtl ? "عملة الفاتورة:" : "Currency:";
+  const resolvedTitle = dropdownTitle ?? (isRtl ? "اختر عملة الفاتورة" : "Select Invoice Currency");
 
   return (
     <div
@@ -64,9 +70,11 @@ export function CurrencySelector({
       dir={isRtl ? "rtl" : "ltr"}
     >
       <div className="flex items-center gap-1.5">
-        <span className="text-[11px] font-bold text-muted-foreground whitespace-nowrap">
-          {isRtl ? "عملة الفاتورة:" : "Currency:"}
-        </span>
+        {resolvedLabel ? (
+          <span className="text-[11px] font-bold text-muted-foreground whitespace-nowrap">
+            {resolvedLabel}
+          </span>
+        ) : null}
 
         {/* Trigger Button */}
         <button
@@ -83,7 +91,7 @@ export function CurrencySelector({
           } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
           aria-haspopup="listbox"
           aria-expanded={isOpen}
-          title={isRtl ? "تغيير عملة الفاتورة" : "Change invoice currency"}
+          title={resolvedTitle}
         >
           <span className="text-xs leading-none">{selectedConfig.flag}</span>
           <span className="font-mono font-bold tracking-tight">{selectedConfig.code}</span>
@@ -106,7 +114,7 @@ export function CurrencySelector({
           className="absolute z-50 mt-1 min-w-[210px] sm:min-w-[230px] rounded-xl border border-border bg-popover/95 p-1 text-popover-foreground shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 top-full end-0"
         >
           <div className="px-2 py-1 border-b border-border/40 text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-            <span>{isRtl ? "اختر عملة الفاتورة" : "Select Invoice Currency"}</span>
+            <span>{resolvedTitle}</span>
             <Coins className="h-3 w-3 text-primary opacity-80" />
           </div>
 

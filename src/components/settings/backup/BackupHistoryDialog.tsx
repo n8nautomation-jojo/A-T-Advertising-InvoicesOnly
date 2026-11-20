@@ -15,7 +15,9 @@ import {
   DownloadCloud,
   Lock,
   Loader2,
+  KeyRound,
 } from "lucide-react";
+import { countBusinessRecords } from "@/lib/backup/validation";
 import {
   BACKUP_KIND_LABELS,
   type BackupFileInfo,
@@ -23,6 +25,7 @@ import {
   formatDateTime,
   STATUS_LABEL,
 } from "./types";
+import { BackupModulePills } from "./RestoreHubParts";
 import { playTapSound } from "@/lib/soundEffects";
 
 interface BackupHistoryDialogProps {
@@ -85,6 +88,11 @@ export function BackupHistoryDialog({
                 : "نسخة محفوظة";
               const isVerifying = busy === "verify:" + b.fileName;
               const isExporting = busy === "export:" + b.fileName;
+              const isEncryptedLocked = b.status === "encrypted";
+              const totalRecords = b.manifest
+                ? b.manifest.totalBusinessRecords ??
+                  countBusinessRecords(b.manifest.counts)
+                : 0;
 
               return (
                 <div
@@ -112,19 +120,32 @@ export function BackupHistoryDialog({
                           {status.label}
                         </span>
                         <span>• {formatBytes(b.sizeBytes)}</span>
-                        <span>• {b.manifest?.invoiceCount ?? 0} فاتورة</span>
-                        <span>
-                          • مخطط v{b.manifest?.databaseSchemaVersion ?? "1"}
-                        </span>
-                        {b.manifest?.encrypted && (
+                        {b.manifest && (
+                          <>
+                            <span>• {totalRecords} سجل</span>
+                            <span>
+                              • مخطط v{b.manifest.databaseSchemaVersion ?? "1"}
+                            </span>
+                          </>
+                        )}
+                        {(b.manifest?.encrypted || isEncryptedLocked) && (
                           <span className="flex items-center gap-0.5 text-primary font-bold">
                             <Lock className="h-2.5 w-2.5" />
                             مشفّرة
                           </span>
                         )}
                       </div>
+
+                      {b.manifest?.counts && (
+                        <BackupModulePills
+                          counts={b.manifest.counts}
+                          invoiceCount={b.manifest.invoiceCount}
+                          className="mt-2"
+                        />
+                      )}
+
                       {b.issue && (
-                        <p className="mt-1 text-[10px] leading-relaxed text-amber-700 dark:text-amber-300 bg-amber-500/10 p-1.5 rounded-lg border border-amber-500/20">
+                        <p className="mt-1.5 text-[10px] leading-relaxed text-amber-700 dark:text-amber-300 bg-amber-500/10 p-1.5 rounded-lg border border-amber-500/20">
                           {b.issue}
                         </p>
                       )}
@@ -155,12 +176,28 @@ export function BackupHistoryDialog({
                           playTapSound();
                           onRestoreSelect(b);
                         }}
-                        disabled={busy !== null || b.status !== "verified"}
+                        disabled={
+                          busy !== null ||
+                          (b.status !== "verified" && !isEncryptedLocked)
+                        }
                         className="h-8 px-2 rounded-xl text-[11px] font-bold gap-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
-                        title="استعادة هذه النسخة"
+                        title={
+                          isEncryptedLocked
+                            ? "فك تشفير النسخة برمز الاسترداد"
+                            : "استعادة هذه النسخة"
+                        }
                       >
-                        <RotateCcw className="h-3 w-3" />
-                        <span>استعادة</span>
+                        {isEncryptedLocked ? (
+                          <>
+                            <KeyRound className="h-3 w-3" />
+                            <span>فك التشفير</span>
+                          </>
+                        ) : (
+                          <>
+                            <RotateCcw className="h-3 w-3" />
+                            <span>استعادة</span>
+                          </>
+                        )}
                       </Button>
 
                       <Button

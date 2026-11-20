@@ -10,6 +10,7 @@ import { getDb } from "@/lib/database";
 import { notifyDataChanged } from "@/lib/backup/notify";
 import { appendAuditEntry } from "@/lib/repositories/AuditLogRepository";
 import { buildSettlement, type SettlementSummary } from "@/lib/domain/finance";
+import { sanitizeCurrency, type AppCurrency } from "@/lib/currency/types";
 
 export interface Supplier {
   id: string;
@@ -127,8 +128,12 @@ export interface SupplierAccount {
 }
 
 /** Purchase invoices of one supplier with payments applied (single grouped query, includes unallocated advances). */
-export async function getSupplierAccount(supplierId: string): Promise<SupplierAccount> {
+export async function getSupplierAccount(
+  supplierId: string,
+  currency?: AppCurrency
+): Promise<SupplierAccount> {
   const db = await getDb();
+  const cur = currency ? sanitizeCurrency(currency) : undefined;
   const [supplier, invoicesRes, totalPaymentsRes] = await Promise.all([
     getSupplierById(supplierId),
     db.query(
@@ -140,16 +145,19 @@ export async function getSupplierAccount(supplierId: string): Promise<SupplierAc
            SELECT al.invoice_id, SUM(al.amount) AS paid
              FROM supplier_payment_allocations al
              JOIN supplier_payments p ON p.id = al.payment_id
-            WHERE p.cancelled_at IS NULL
+            WHERE p.cancelled_at IS NULL ${cur ? "AND COALESCE(p.currency, 'SDG') = ?" : ""}
             GROUP BY al.invoice_id
          ) a ON a.invoice_id = i.id
         WHERE i.supplier_id = ? AND i.type = 'purchase' AND i.cancelled_at IS NULL
+          ${cur ? "AND COALESCE(i.currency, 'SDG') = ?" : ""}
         ORDER BY i.date DESC, i.created_at DESC`,
-      [supplierId]
+      cur ? [cur, supplierId, cur] : [supplierId]
     ),
     db.query(
-      "SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE supplier_id = ? AND cancelled_at IS NULL",
-      [supplierId]
+      `SELECT COALESCE(SUM(amount), 0) AS paid
+         FROM supplier_payments
+        WHERE supplier_id = ? AND cancelled_at IS NULL ${cur ? "AND COALESCE(currency, 'SDG') = ?" : ""}`,
+      cur ? [supplierId, cur] : [supplierId]
     ),
   ]);
 
@@ -189,21 +197,26 @@ export async function getSupplierAccount(supplierId: string): Promise<SupplierAc
 }
 
 /** Single grouped SQL query replacing the previous N+1 loop across suppliers. */
-export async function getSupplierOutstandingMap(): Promise<Record<string, number>> {
+export async function getSupplierOutstandingMap(currency?: AppCurrency): Promise<Record<string, number>> {
   const db = await getDb();
+  const cur = currency ? sanitizeCurrency(currency) : undefined;
   const [supRes, invRes, payRes] = await Promise.all([
     db.query("SELECT id FROM suppliers WHERE cancelled_at IS NULL"),
     db.query(
       `SELECT supplier_id, COALESCE(SUM(total_amount), 0) AS total
          FROM custom_invoices
         WHERE type = 'purchase' AND cancelled_at IS NULL AND supplier_id IS NOT NULL
-        GROUP BY supplier_id`
+          ${cur ? "AND COALESCE(currency, 'SDG') = ?" : ""}
+        GROUP BY supplier_id`,
+      cur ? [cur] : []
     ),
     db.query(
       `SELECT supplier_id, COALESCE(SUM(amount), 0) AS paid
          FROM supplier_payments
         WHERE cancelled_at IS NULL
-        GROUP BY supplier_id`
+          ${cur ? "AND COALESCE(currency, 'SDG') = ?" : ""}
+        GROUP BY supplier_id`,
+      cur ? [cur] : []
     ),
   ]);
 

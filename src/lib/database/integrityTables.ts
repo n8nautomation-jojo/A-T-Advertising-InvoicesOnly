@@ -24,6 +24,7 @@ export const BACKUP_INTEGRITY_TABLES = [
   "financial_transactions",
   "document_sequences",
   "audit_log",
+  "official_letters",
   "sequences",
   "settings",
   "db_meta",

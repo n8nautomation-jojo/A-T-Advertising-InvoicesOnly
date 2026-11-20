@@ -1,13 +1,18 @@
 import React from "react";
-import { Users, Truck, FileText } from "lucide-react";
+import { Users, Truck, FileText, Printer, Share2, ExternalLink } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { CustomerRecord } from "@/lib/customersStore";
 import type { Supplier } from "@/lib/repositories/SupplierRepository";
 import type { CustomerStatement, SupplierStatement } from "@/lib/repositories/ReportsRepository";
-import type { AppCurrency } from "@/lib/currency/types";
+import { SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
 import { CurrencySelector } from "@/components/currency/CurrencySelector";
 import { formatNumber } from "@/lib/printCalculator";
+import {
+  printCustomerStatement,
+  shareCustomerStatementViaWhatsApp,
+} from "@/lib/customerStatementExport";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -35,14 +40,17 @@ export function ReportsStatementsView({
   onSelectCustomer,
   onSelectSupplier,
 }: Props) {
-  const curLabel = currency === "SDG" ? "ج.س" : currency;
+  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const activeCustomer = statementCustomerId
+    ? customers.find((c) => c.id === statementCustomerId)
+    : undefined;
 
   return (
     <div className="space-y-3.5" dir="rtl">
       {onCurrencyChange && (
         <div className="flex items-center justify-between gap-2 rounded-2xl border border-border/80 bg-card p-3 shadow-2xs">
           <span className="text-xs font-black text-foreground">عملة كشوفات الحساب:</span>
-          <CurrencySelector value={currency} onChange={onCurrencyChange} locale="ar" />
+          <CurrencySelector label="" dropdownTitle="اختر عملة كشف الحساب" value={currency} onChange={onCurrencyChange} locale="ar" />
         </div>
       )}
 
@@ -122,6 +130,25 @@ export function ReportsStatementsView({
           { label: "إجمالي التحصيل", value: statement?.totalCollected ?? 0 },
           { label: "الرصيد المتبقي", value: statement?.netBalance ?? statement?.outstanding ?? 0 },
         ]}
+        onPrint={
+          statement && activeCustomer
+            ? () => {
+                void printCustomerStatement(statement, activeCustomer, currency);
+              }
+            : undefined
+        }
+        onShare={
+          statement && activeCustomer
+            ? () => {
+                void shareCustomerStatementViaWhatsApp(statement, activeCustomer, currency);
+              }
+            : undefined
+        }
+        workspaceLink={
+          statementCustomerId
+            ? { label: "ملف العميل", to: "/customers", search: { id: statementCustomerId } }
+            : undefined
+        }
       />
 
       {/* نافذة كشف المورد */}
@@ -136,6 +163,7 @@ export function ReportsStatementsView({
           { label: "إجمالي المدفوع", value: supplierStatement?.totalPaid ?? 0 },
           { label: "المستحق القائم", value: supplierStatement?.netBalance ?? supplierStatement?.outstanding ?? 0 },
         ]}
+        workspaceLink={{ label: "صفحة الموردين", to: "/suppliers" }}
       />
     </div>
   );
@@ -148,6 +176,9 @@ function StatementModal({
   currencyLabel,
   lines,
   summary,
+  onPrint,
+  onShare,
+  workspaceLink,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -164,6 +195,9 @@ function StatementModal({
     runningBalance: number;
   }[];
   summary: { label: string; value: number }[];
+  onPrint?: () => void;
+  onShare?: () => void;
+  workspaceLink?: { label: string; to: "/customers" | "/suppliers"; search?: { id: string } };
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -174,6 +208,49 @@ function StatementModal({
             {title}
           </DialogTitle>
         </DialogHeader>
+
+        {(onPrint || onShare || workspaceLink) && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {onPrint && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onPrint}
+                className="h-8 rounded-xl gap-1.5 text-[11px] font-black"
+              >
+                <Printer className="h-3.5 w-3.5 text-primary" />
+                <span>طباعة A4</span>
+              </Button>
+            )}
+            {onShare && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onShare}
+                className="h-8 rounded-xl gap-1.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                <span>واتساب PDF</span>
+              </Button>
+            )}
+            {workspaceLink && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                asChild
+                className="h-8 rounded-xl gap-1.5 text-[11px] font-black ms-auto"
+              >
+                <Link to={workspaceLink.to} search={workspaceLink.search} onClick={() => onOpenChange(false)}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>{workspaceLink.label}</span>
+                </Link>
+              </Button>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-2 my-2">
           {summary.map((row) => (

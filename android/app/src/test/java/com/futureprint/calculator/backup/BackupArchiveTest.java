@@ -4,10 +4,15 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import org.junit.Test;
 
 /**
@@ -212,6 +217,199 @@ public class BackupArchiveTest {
             fail("يجب رفض ملف أُضيفت إليه بايتات");
         } catch (BackupArchive.FormatException e) {
             assertEquals("TRUNCATED", e.code);
+        }
+    }
+
+    // ── 6. اختبارات الصيغة v2 (ضغط GZIP + AAD + قراءة الترويسة فقط) ────────
+
+    private static final String V2_HEADER_JSON =
+        "{\"format\":\"TA-BACKUP\",\"manifestVersion\":1,\"archiveVersion\":2,\"backupId\":\"v2-test-1\",\"databaseSchemaVersion\":6}";
+
+    private static byte[] sampleSqliteLikeBytes(int size) {
+        byte[] data = new byte[size];
+        byte[] magic = "SQLite format 3\u0000".getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(magic, 0, data, 0, magic.length);
+        for (int i = magic.length; i < size; i++) {
+            data[i] = (byte) ((i / 64) % 13);
+        }
+        return data;
+    }
+
+    private static final class CountingInputStream extends FilterInputStream {
+
+        long bytesRead = 0;
+
+        CountingInputStream(ByteArrayInputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int r = super.read();
+            if (r >= 0) bytesRead++;
+            return r;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int r = super.read(b, off, len);
+            if (r > 0) bytesRead += r;
+            return r;
+        }
+    }
+
+    @Test
+    public void v2UnsealedGzipRoundTrip() throws Exception {
+        byte[] headerBytes = V2_HEADER_JSON.getBytes(StandardCharsets.UTF_8);
+        byte[] rawDb = sampleSqliteLikeBytes(64 * 1024);
+
+        byte[] archive = BackupArchive.encodeV2(headerBytes, rawDb, null, true);
+        assertEquals(BackupArchive.FORMAT_VERSION_V2, BackupArchive.detectVersion(archive));
+        assertTrue("GZIP must shrink repetitive SQLite-like payload significantly", archive.length < rawDb.length / 4);
+
+        BackupArchive.ParsedV2 parsed = BackupArchive.parseV2(archive);
+        assertEquals(2, parsed.version);
+        assertFalse(parsed.sealed);
+        assertTrue(parsed.compressed);
+        assertEquals("", parsed.keyId);
+        assertEquals(archive.length, parsed.totalLength);
+        assertArrayEquals(headerBytes, parsed.headerBlock);
+
+        byte[] restoredDb = BackupArchive.gunzip(parsed.dbBlock, BackupArchive.DEFAULT_MAX_GUNZIP_BYTES);
+        assertArrayEquals(rawDb, restoredDb);
+    }
+
+    @Test
+    public void v2SealedGzipWithAadRoundTrip() throws Exception {
+        byte[] headerBytes = V2_HEADER_JSON.getBytes(StandardCharsets.UTF_8);
+        byte[] rawDb = sampleSqliteLikeBytes(32 * 1024);
+
+        byte[] archive = BackupArchive.encodeV2(headerBytes, rawDb, KEY, true);
+        assertEquals(BackupArchive.FORMAT_VERSION_V2, BackupArchive.detectVersion(archive));
+
+        BackupArchive.ParsedV2 parsed = BackupArchive.parseV2(archive);
+        assertEquals(2, parsed.version);
+        assertTrue(parsed.sealed);
+        assertTrue(parsed.compressed);
+        assertEquals(KEY_ID, parsed.keyId);
+        assertEquals(archive.length, parsed.totalLength);
+
+        byte[] openedHeader = BackupArchive.open(parsed.headerBlock, KEY);
+        assertEquals(V2_HEADER_JSON, new String(openedHeader, StandardCharsets.UTF_8));
+
+        byte[] compressedDb = BackupArchive.openWithAad(parsed.dbBlock, KEY, parsed.headerBlock);
+        byte[] restoredDb = BackupArchive.gunzip(compressedDb, BackupArchive.DEFAULT_MAX_GUNZIP_BYTES);
+        assertArrayEquals(rawDb, restoredDb);
+    }
+
+    @Test
+    public void v2HeaderOnlyStreamingParseReadsOnlyPrefixKeyIdAndHeader() throws Exception {
+        byte[] headerBytes = V2_HEADER_JSON.getBytes(StandardCharsets.UTF_8);
+        byte[] rawDb = new byte[128 * 1024];
+        // Fill with pseudo-random uncompressible bytes so dbBlock is large (~128 KB)
+        for (int i = 0; i < rawDb.length; i++) {
+            rawDb[i] = (byte) ((i * 31 + (i >> 3) * 17) ^ 0xA5);
+        }
+
+        byte[] archive = BackupArchive.encodeV2(headerBytes, rawDb, KEY, true);
+        CountingInputStream countingIn = new CountingInputStream(new ByteArrayInputStream(archive));
+
+        BackupArchive.ParsedV2 headerOnly = BackupArchive.parseV2HeaderOnly(countingIn);
+        assertEquals(2, headerOnly.version);
+        assertTrue(headerOnly.sealed);
+        assertTrue(headerOnly.compressed);
+        assertEquals(KEY_ID, headerOnly.keyId);
+        assertNull("Streaming header parse must NOT load dbBlock into RAM", headerOnly.dbBlock);
+        assertEquals(archive.length, headerOnly.totalLength);
+
+        long expectedHeaderRead = BackupArchive.V2_PREFIX_LEN + KEY_ID.length() + headerOnly.headerBlock.length;
+        assertEquals("Stream must stop right after headerBlock without reading DB bytes", expectedHeaderRead, countingIn.bytesRead);
+        assertTrue("Header bytes read must be tiny compared to total archive", countingIn.bytesRead < 1024);
+
+        byte[] decryptedHeader = BackupArchive.open(headerOnly.headerBlock, KEY);
+        assertEquals(V2_HEADER_JSON, new String(decryptedHeader, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void v2RejectsAadHeaderTampering() throws Exception {
+        byte[] headerBytes = V2_HEADER_JSON.getBytes(StandardCharsets.UTF_8);
+        byte[] rawDb = sampleSqliteLikeBytes(4096);
+        byte[] archive = BackupArchive.encodeV2(headerBytes, rawDb, KEY, true);
+        BackupArchive.ParsedV2 parsed = BackupArchive.parseV2(archive);
+
+        // Even a freshly sealed different valid header under the SAME key must fail AAD check!
+        byte[] forgedHeader = BackupArchive.seal("{\"format\":\"TA-BACKUP\",\"backupId\":\"forged\"}".getBytes(StandardCharsets.UTF_8), KEY);
+        try {
+            BackupArchive.openWithAad(parsed.dbBlock, KEY, forgedHeader);
+            fail("يجب رفض استبدال الترويسة بسبب ربط AAD بكتلة قاعدة البيانات");
+        } catch (BackupArchive.SealException expected) {
+            assertNotNull(expected.getMessage());
+        }
+    }
+
+    @Test
+    public void v2RejectsDbBlockTampering() throws Exception {
+        byte[] headerBytes = V2_HEADER_JSON.getBytes(StandardCharsets.UTF_8);
+        byte[] rawDb = sampleSqliteLikeBytes(4096);
+        byte[] archive = BackupArchive.encodeV2(headerBytes, rawDb, KEY, true);
+        BackupArchive.ParsedV2 parsed = BackupArchive.parseV2(archive);
+
+        byte[] tamperedDb = parsed.dbBlock.clone();
+        tamperedDb[tamperedDb.length - 1] ^= 0x01;
+        try {
+            BackupArchive.openWithAad(tamperedDb, KEY, parsed.headerBlock);
+            fail("يجب رفض العبث بكتلة قاعدة البيانات");
+        } catch (BackupArchive.SealException expected) {
+            assertNotNull(expected.getMessage());
+        }
+    }
+
+    // ── 7. مفتاح الاسترداد (Recovery Key) ───────────────────────────────────
+
+    @Test
+    public void recoveryKeyFormatParseAndChecksumRejection() {
+        String formatted = BackupArchive.formatRecoveryKey(KEY);
+        assertTrue("يجب أن يبدأ بـ TAKEY-", formatted.startsWith("TAKEY-"));
+        String[] parts = formatted.split("-");
+        assertEquals("TAKEY + 17 مجموعة = 18 جزءاً", 18, parts.length);
+        for (int i = 1; i < parts.length; i++) {
+            assertEquals(4, parts[i].length());
+        }
+
+        // Exact round-trip
+        assertArrayEquals(KEY, BackupArchive.parseRecoveryKey(formatted));
+
+        // Flexible input: lowercase, spaces, no TAKEY prefix
+        String noPrefix = formatted.substring("TAKEY-".length()).toLowerCase().replace('-', ' ');
+        assertArrayEquals(KEY, BackupArchive.parseRecoveryKey(noPrefix));
+
+        // Corrupt a single character -> checksum must reject
+        char[] chars = formatted.toCharArray();
+        int flipIdx = chars.length - 1;
+        chars[flipIdx] = chars[flipIdx] == '0' ? '1' : '0';
+        try {
+            BackupArchive.parseRecoveryKey(new String(chars));
+            fail("يجب رفض مفتاح استرداد بـ checksum خاطئ");
+        } catch (IllegalArgumentException expected) {
+            assertNotNull(expected.getMessage());
+        }
+
+        // Wrong length rejected
+        try {
+            BackupArchive.parseRecoveryKey("TAKEY-0707-0707");
+            fail("يجب رفض مفتاح استرداد قصير");
+        } catch (IllegalArgumentException expected) {
+            assertNotNull(expected.getMessage());
+        }
+
+        // Non-hex character rejected
+        char[] nonHex = formatted.toCharArray();
+        nonHex[6] = 'Z';
+        try {
+            BackupArchive.parseRecoveryKey(new String(nonHex));
+            fail("يجب رفض أحرف غير ست عشرية");
+        } catch (IllegalArgumentException expected) {
+            assertNotNull(expected.getMessage());
         }
     }
 }

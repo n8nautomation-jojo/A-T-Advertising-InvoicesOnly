@@ -4,10 +4,14 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { CurrencySelector } from "@/components/currency/CurrencySelector";
+import { DEFAULT_CURRENCY, type AppCurrency } from "@/lib/currency/types";
 
 interface Props {
   from: string;
   to: string;
+  currency?: AppCurrency;
+  onCurrencyChange?: (c: AppCurrency) => void;
   onFromChange: (val: string) => void;
   onToChange: (val: string) => void;
   onQuickPreset: (preset: "today" | "month" | "year" | "all") => void;
@@ -18,6 +22,8 @@ interface Props {
 export function ReportsHeader({
   from,
   to,
+  currency = DEFAULT_CURRENCY,
+  onCurrencyChange,
   onFromChange,
   onToChange,
   onQuickPreset,
@@ -27,7 +33,7 @@ export function ReportsHeader({
   return (
     <header className="space-y-3 shrink-0" dir="rtl">
       {/* الشريط العلوي التنفيذي */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2.5">
           <Link
             to="/"
@@ -47,17 +53,27 @@ export function ReportsHeader({
           </div>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onRefresh}
-          disabled={loading}
-          aria-label="تحديث البيانات"
-          className="h-9 w-9 rounded-xl p-0 border-border/80 bg-card text-foreground shadow-2xs hover:border-primary/40 hover:text-primary active:scale-95 touch-manipulation"
-        >
-          <RefreshCw className={cn("h-4 w-4 text-foreground", loading && "animate-spin text-primary")} />
-        </Button>
+        <div className="flex items-center gap-2">
+          {onCurrencyChange && (
+            <CurrencySelector
+              label="العملة:"
+              dropdownTitle="اختر عملة التقارير"
+              value={currency}
+              onChange={onCurrencyChange}
+            />
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onRefresh}
+            disabled={loading}
+            aria-label="تحديث البيانات"
+            className="h-8 w-8 rounded-xl p-0 border-border/80 bg-card text-foreground shadow-2xs hover:border-primary/40 hover:text-primary active:scale-95 touch-manipulation"
+          >
+            <RefreshCw className={cn("h-4 w-4 text-foreground", loading && "animate-spin text-primary")} />
+          </Button>
+        </div>
       </div>
 
       {/* شريط الفلاتر السريعة واختيار التاريخ */}

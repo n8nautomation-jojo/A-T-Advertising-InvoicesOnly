@@ -7,10 +7,14 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.os.StatFs;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.OpenableColumns;
+import android.system.Os;
+import android.system.StructStatVfs;
+import android.util.Log;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -33,6 +37,7 @@ import java.util.List;
  */
 final class BackupStorage {
 
+    private static final String TAG = "BackupStorage";
     private static final String PREFS = "ta_backup_storage";
     private static final String KEY_TREE = "tree_uri";
     private static final String KEY_LABEL = "tree_label";
@@ -238,6 +243,19 @@ final class BackupStorage {
         return out;
     }
 
+    /** Opens a streaming InputStream for partial/header-only reads without loading the whole file into RAM. */
+    InputStream openInputStream(Uri uri) throws FolderUnavailableException {
+        try {
+            InputStream in = context.getContentResolver().openInputStream(uri);
+            if (in == null) throw new FolderUnavailableException("IO_FAILED", "تعذّر فتح ملف النسخة.");
+            return in;
+        } catch (FolderUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new FolderUnavailableException("IO_FAILED", "تعذّر فتح ملف النسخة: " + e.getMessage());
+        }
+    }
+
     byte[] read(Uri uri, long maxBytes) throws FolderUnavailableException {
         try (InputStream in = context.getContentResolver().openInputStream(uri)) {
             if (in == null) throw new FolderUnavailableException("IO_FAILED", "تعذّر فتح ملف النسخة.");
@@ -316,12 +334,14 @@ final class BackupStorage {
 
     /**
      * Atomic replace: write to "<final>.tmp", read it back, compare SHA-256,
-     * then rename. The previous file with the same name, if any, is only
-     * touched at the final step (SAF cannot rename over an existing document).
+     * then rename. If a SAF provider rejects `renameDocument` or mutates the
+     * display name during rename, falls back to a direct verified write to
+     * `finalName` and cleans up temporary files.
      */
     void writeAtomically(Uri tree, String finalName, byte[] data) throws FolderUnavailableException {
         assertSafeFileName(finalName);
         String stagingName = finalName + BackupArchiveConstants.STAGING_SUFFIX;
+        String previousName = BackupArchiveConstants.PREVIOUS_PREFIX + finalName;
         writeDocument(tree, stagingName, data);
         String expected = BackupArchive.sha256Hex(data);
         byte[] readBack;
@@ -334,34 +354,77 @@ final class BackupStorage {
             throw e;
         }
         String actual = BackupArchive.sha256Hex(readBack);
+        readBack = null;
         if (!expected.equals(actual)) {
             deleteQuietly(tree, stagingName);
             throw new FolderUnavailableException("VERIFY_FAILED", "المجلد أعاد بايتات مختلفة عن التي كُتبت — لم يتم اعتماد النسخة.");
         }
+
         ContentResolver resolver = context.getContentResolver();
+        boolean movedExistingToPrev = false;
+        Uri renamedUri = null;
         try {
             Uri existing = findDocument(tree, finalName);
             if (existing != null) {
-                // Create a unique predecessor name so the old backup survives a failure here.
-                String previousName = BackupArchiveConstants.PREVIOUS_PREFIX + finalName;
                 Uri previous = findDocument(tree, previousName);
                 if (previous != null) deleteQuietly(tree, previousName);
-                Uri stagingDoc = findDocument(tree, stagingName);
                 try {
                     DocumentsContract.renameDocument(resolver, existing, previousName);
+                    movedExistingToPrev = findDocument(tree, previousName) != null;
                 } catch (Exception ignored) {
-                    // provider without rename support: delete the old file last
+                    // provider without rename support: fall through to rename or direct fallback
                 }
-                DocumentsContract.renameDocument(resolver, stagingDoc, finalName);
-                deleteQuietly(tree, previousName);
-            } else {
-                Uri stagingDoc = findDocument(tree, stagingName);
-                if (stagingDoc == null) throw new IOException("الملف المؤقت اختفى أثناء الكتابة.");
-                DocumentsContract.renameDocument(resolver, stagingDoc, finalName);
             }
+            Uri stagingDoc = findDocument(tree, stagingName);
+            if (stagingDoc == null) throw new IOException("الملف المؤقت اختفى أثناء الكتابة.");
+            renamedUri = DocumentsContract.renameDocument(resolver, stagingDoc, finalName);
+            // Verify the provider actually gave the document the exact requested display name.
+            Uri committed = findDocument(tree, finalName);
+            if (committed != null) {
+                deleteQuietly(tree, previousName);
+                return;
+            }
+            Log.w(TAG, "renameDocument did not produce expected display name " + finalName + "; falling back to direct verified write");
         } catch (Exception e) {
+            Log.w(TAG, "renameDocument failed for " + finalName + "; falling back to direct verified write: " + e.getMessage());
+        }
+
+        // Clean up any renamed artifact with an unexpected display name before direct write.
+        if (renamedUri != null) {
+            try {
+                DocumentsContract.deleteDocument(resolver, renamedUri);
+            } catch (Exception ignored) {
+                // best effort
+            }
+        }
+
+        // Resilient fallback: direct verified write to `finalName`, then remove staging & previous.
+        try {
+            writeDocument(tree, finalName, data);
+            Uri finalDoc = findDocument(tree, finalName);
+            if (finalDoc == null) {
+                throw new FolderUnavailableException("IO_FAILED", "تعذّر العثور على الملف بعد الكتابة المباشرة: " + finalName);
+            }
+            byte[] directReadBack = read(finalDoc, data.length + 1024L * 1024L);
+            String directActual = BackupArchive.sha256Hex(directReadBack);
+            directReadBack = null;
+            if (!expected.equals(directActual)) {
+                deleteQuietly(tree, finalName);
+                throw new FolderUnavailableException("VERIFY_FAILED", "المجلد أعاد بايتات مختلفة عن التي كُتبت — لم يتم اعتماد النسخة.");
+            }
             deleteQuietly(tree, stagingName);
-            throw new FolderUnavailableException("IO_FAILED", "تعذّر اعتماد الملف " + finalName + ": " + e.getMessage());
+            deleteQuietly(tree, previousName);
+        } catch (FolderUnavailableException e) {
+            if (movedExistingToPrev && findDocument(tree, finalName) == null) {
+                try {
+                    Uri prevDoc = findDocument(tree, previousName);
+                    if (prevDoc != null) DocumentsContract.renameDocument(resolver, prevDoc, finalName);
+                } catch (Exception ignored) {
+                    // best effort restore of previous file
+                }
+            }
+            deleteQuietly(tree, stagingName);
+            throw e;
         }
     }
 
@@ -407,17 +470,30 @@ final class BackupStorage {
     // ── Capacity ───────────────────────────────────────────────────────────
 
     /**
-     * Free bytes on the volume that most likely holds the folder.
-     * SAF providers do not expose free space reliably (Document.COLUMN_FLAGS has
-     * no "space" column), so we report the primary shared volume when the tree
-     * points at "primary:" storage and the data volume otherwise.
+     * Free bytes on the volume holding the backup folder.
+     * Prefers `ParcelFileDescriptor` + `Os.fstatvfs` on the SAF folder document when
+     * supported by the provider (handles SD cards accurately), falling back to `StatFs`.
      */
     long freeBytesForFolder() {
+        String stored = getFolderUri();
+        if (stored != null && !stored.isEmpty()) {
+            try {
+                Uri tree = Uri.parse(stored);
+                Uri docUri = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+                try (ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(docUri, "r")) {
+                    if (pfd != null) {
+                        StructStatVfs statVfs = Os.fstatvfs(pfd.getFileDescriptor());
+                        long blockSize = statVfs.f_frsize > 0 ? statVfs.f_frsize : statVfs.f_bsize;
+                        if (blockSize > 0 && statVfs.f_bavail >= 0) {
+                            return statVfs.f_bavail * blockSize;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Many SAF providers do not support opening a directory FD; fall back to StatFs below.
+            }
+        }
         try {
-            // Shared storage lives on the primary volume; the app's private
-            // database lives on the data volume. Selecting an SD-card tree still
-            // reports the data volume's headroom, which is the conservative side
-            // for our "never fill the device" pre-flight check.
             File target = android.os.Environment.getExternalStorageDirectory();
             StatFs stat = new StatFs(target.getAbsolutePath());
             if (Build.VERSION.SDK_INT >= 18) {

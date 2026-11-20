@@ -1,5 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Check, Pencil, Phone, Plus, Receipt, RefreshCw, Search, Truck, Wallet, X } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  FileText,
+  Pencil,
+  Phone,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Search,
+  ShoppingBag,
+  Truck,
+  Wallet,
+  X,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/button";
@@ -15,6 +29,11 @@ import {
 } from "@/lib/repositories/SupplierRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { SupplierPaymentDialog } from "@/components/finance/SupplierPaymentDialog";
+import { CurrencySelector } from "@/components/currency/CurrencySelector";
+import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
+import { CustomInvoiceDialog } from "@/components/billing/CustomInvoiceDialog";
+import { BillingPreviewModal } from "@/components/billing/BillingPreviewModal";
+import type { CustomInvoice } from "@/lib/billing/types";
 
 /**
  * الموردون (PRD §7.1): شركات الطباعة ومقدّمو الخدمات، مع رصيد مشتق من
@@ -23,19 +42,26 @@ import { SupplierPaymentDialog } from "@/components/finance/SupplierPaymentDialo
 export function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [outstanding, setOutstanding] = useState<Record<string, number>>({});
+  const [currency, setCurrency] = useState<AppCurrency>(DEFAULT_CURRENCY);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [paySupplierId, setPaySupplierId] = useState<string | null>(null);
+  const [purchaseSupplier, setPurchaseSupplier] = useState<Supplier | null>(null);
+  const [previewInvoice, setPreviewInvoice] = useState<CustomInvoice | null>(null);
+  const [editingInvoice, setEditingInvoice] = useState<CustomInvoice | null>(null);
+
+  const currencyLabel =
+    currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [list, outstandingMap] = await Promise.all([
         getAllSuppliers(),
-        getSupplierOutstandingMap(),
+        getSupplierOutstandingMap(currency),
       ]);
       setSuppliers(list);
       setOutstanding(outstandingMap);
@@ -45,7 +71,7 @@ export function SuppliersPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     void load();
@@ -137,18 +163,26 @@ export function SuppliersPage() {
               </div>
             </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void load()}
-              disabled={loading}
-              aria-label="تحديث"
-              className="h-9 px-3 rounded-xl gap-1.5 text-xs font-bold text-muted-foreground self-end sm:self-center"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-              <span>تحديث</span>
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap self-end sm:self-center">
+              <CurrencySelector
+                label="العملة:"
+                dropdownTitle="اختر عملة الأرصدة"
+                value={currency}
+                onChange={setCurrency}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void load()}
+                disabled={loading}
+                aria-label="تحديث"
+                className="h-8 px-3 rounded-xl gap-1.5 text-xs font-bold text-muted-foreground"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                <span>تحديث</span>
+              </Button>
+            </div>
           </div>
 
           {/* 2. مؤشرات الأداء */}
@@ -180,7 +214,7 @@ export function SuppliersPage() {
               </span>
               <p className="font-mono text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 tabular-nums">
                 {formatNumber(stats.totalOutstanding)}{" "}
-                <span className="text-[10px] font-normal">ج.س</span>
+                <span className="text-[10px] font-normal">{currencyLabel}</span>
               </p>
             </div>
           </div>
@@ -290,7 +324,9 @@ export function SuppliersPage() {
                         </div>
 
                         <div className="shrink-0 rounded-xl border border-border/60 bg-muted/20 px-2.5 py-1.5 text-center">
-                          <p className="text-[9.5px] font-bold text-muted-foreground">المستحق</p>
+                          <p className="text-[9.5px] font-bold text-muted-foreground">
+                            المستحق ({currencyLabel})
+                          </p>
                           <p
                             className={cn(
                               "font-mono text-xs font-black tabular-nums mt-0.5",
@@ -302,7 +338,7 @@ export function SuppliersPage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 border-t border-border/50 pt-2.5">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 border-t border-border/50 pt-2.5">
                         <Button
                           type="button"
                           size="sm"
@@ -312,7 +348,7 @@ export function SuppliersPage() {
                             setName(supplier.name);
                             setPhone(supplier.phone ?? "");
                           }}
-                          className="h-8 flex-1 rounded-xl gap-1.5 text-[11px] font-bold"
+                          className="h-8 rounded-xl gap-1 text-[11px] font-bold"
                         >
                           <Pencil className="h-3 w-3" />
                           <span>تعديل</span>
@@ -320,8 +356,33 @@ export function SuppliersPage() {
                         <Button
                           type="button"
                           size="sm"
+                          variant="outline"
+                          asChild
+                          className="h-8 rounded-xl gap-1 text-[11px] font-bold"
+                        >
+                          <Link
+                            to="/reports"
+                            search={{ tab: "statements", supplierId: supplier.id }}
+                          >
+                            <FileText className="h-3 w-3 text-primary" />
+                            <span>كشف حساب</span>
+                          </Link>
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setPurchaseSupplier(supplier)}
+                          className="h-8 rounded-xl gap-1 text-[11px] font-bold"
+                        >
+                          <ShoppingBag className="h-3 w-3 text-amber-600" />
+                          <span>فاتورة شراء</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
                           onClick={() => setPaySupplierId(supplier.id)}
-                          className="h-8 flex-1 rounded-xl gap-1.5 text-[11px] font-black bg-primary hover:bg-primary/90 text-white"
+                          className="h-8 rounded-xl gap-1 text-[11px] font-black bg-primary hover:bg-primary/90 text-white"
                         >
                           <Receipt className="h-3 w-3" />
                           <span>تسجيل دفعة</span>
@@ -341,6 +402,45 @@ export function SuppliersPage() {
         onOpenChange={(open) => !open && setPaySupplierId(null)}
         initialSupplierId={paySupplierId}
       />
+
+      <CustomInvoiceDialog
+        open={Boolean(purchaseSupplier)}
+        onOpenChange={(open) => !open && setPurchaseSupplier(null)}
+        initialType="purchase"
+        initialSupplierId={purchaseSupplier?.id}
+        initialSupplier={purchaseSupplier}
+        onSaved={(saved) => {
+          setPurchaseSupplier(null);
+          setPreviewInvoice(saved);
+          void load();
+        }}
+      />
+
+      {previewInvoice && (
+        <BillingPreviewModal
+          invoice={previewInvoice}
+          open={Boolean(previewInvoice)}
+          onOpenChange={(open) => !open && setPreviewInvoice(null)}
+          onEdit={(inv) => {
+            setPreviewInvoice(null);
+            setEditingInvoice(inv);
+          }}
+        />
+      )}
+
+      {editingInvoice && (
+        <CustomInvoiceDialog
+          open={Boolean(editingInvoice)}
+          onOpenChange={(open) => !open && setEditingInvoice(null)}
+          initialType={editingInvoice.meta.type || "purchase"}
+          invoiceToEdit={editingInvoice}
+          onSaved={(saved) => {
+            setEditingInvoice(null);
+            setPreviewInvoice(saved);
+            void load();
+          }}
+        />
+      )}
     </PageShell>
   );
 }

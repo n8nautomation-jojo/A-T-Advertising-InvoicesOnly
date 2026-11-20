@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useDeferredValue, useRef } from "react";
+import React, { useState, useMemo, useEffect, useDeferredValue, useRef, Suspense, lazy } from "react";
 import {
   Building2,
   Printer,
@@ -12,6 +12,7 @@ import {
   ArrowDownLeft,
   Loader2,
   FileText,
+  FileSignature,
   Eye,
   Edit2,
 } from "lucide-react";
@@ -51,6 +52,11 @@ import {
 import { ReceiptDialog } from "@/components/finance/ReceiptDialog";
 import { BillingPreviewModal } from "@/components/billing/BillingPreviewModal";
 import { CustomInvoiceDialog } from "@/components/billing/CustomInvoiceDialog";
+const LazyLetterIssuerDialog = lazy(() =>
+  import("@/components/letters/LetterIssuerDialog").then((m) => ({
+    default: m.LetterIssuerDialog,
+  }))
+);
 import {
   printCustomInvoiceDocument,
   shareCustomInvoiceViaWhatsApp,
@@ -102,6 +108,7 @@ export function CustomerDetailPage({
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
+  const [letterDialogOpen, setLetterDialogOpen] = useState(false);
   const [targetReceiptInvoiceId, setTargetReceiptInvoiceId] = useState<string | null>(null);
   const [isExportingStatement, setIsExportingStatement] = useState(false);
   const [previewInvoice, setPreviewInvoice] = useState<CustomInvoice | null>(null);
@@ -458,6 +465,20 @@ export function CustomerDetailPage({
               >
                 <ArrowDownLeft className="h-3.5 w-3.5" />
                 <span>تحصيل سند قبض</span>
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  playTapSound();
+                  setLetterDialogOpen(true);
+                }}
+                className="h-9 px-3 rounded-xl font-bold text-xs gap-1.5 border-border/80 text-foreground hover:bg-secondary active:scale-[0.97] transition-all cursor-pointer"
+                title="إصدار خطاب رسمي لهذا العميل"
+              >
+                <FileSignature className="h-3.5 w-3.5 text-primary" />
+                <span>إصدار خطاب</span>
               </Button>
 
               <Button
@@ -844,6 +865,16 @@ export function CustomerDetailPage({
             onCustomerUpdated?.();
           }}
         />
+      )}
+
+      {letterDialogOpen && (
+        <Suspense fallback={null}>
+          <LazyLetterIssuerDialog
+            open={letterDialogOpen}
+            onOpenChange={setLetterDialogOpen}
+            initialRecipientName={customer.name}
+          />
+        </Suspense>
       )}
     </PageShell>
   );

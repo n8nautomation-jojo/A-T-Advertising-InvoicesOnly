@@ -28,6 +28,7 @@ export function Metric({
   label,
   value,
   tone,
+  currencyLabel = "ج.س",
   icon,
   className,
   onClick,
@@ -35,6 +36,7 @@ export function Metric({
   label: string;
   value: string;
   tone: "primary" | "warn" | "danger";
+  currencyLabel?: string;
   icon?: React.ReactNode;
   className?: string;
   onClick?: () => void;
@@ -56,7 +58,7 @@ export function Metric({
         <span>{label}</span>
       </p>
       <p className="font-mono text-base sm:text-lg font-black tabular-nums text-foreground">
-        {value} <span className="text-[10px] font-sans font-normal text-muted-foreground">ج.س</span>
+        {value} <span className="text-[10px] font-sans font-normal text-muted-foreground">{currencyLabel}</span>
       </p>
     </button>
   );

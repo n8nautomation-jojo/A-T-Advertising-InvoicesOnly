@@ -64,9 +64,24 @@ final class DatabaseSnapshotter {
         "financial_transactions",
         "document_sequences",
         "audit_log",
+        "official_letters",
         "sequences",
         "settings",
         "db_meta",
+    };
+    static final String[] BUSINESS_TABLES = {
+        "custom_invoices",
+        "proforma_invoices",
+        "print_invoices",
+        "customers",
+        "suppliers",
+        "orders",
+        "financial_accounts",
+        "customer_payments",
+        "supplier_payments",
+        "expenses",
+        "expense_payments",
+        "official_letters",
     };
     private static final Set<String> ALLOWED_TABLES;
 
@@ -94,6 +109,7 @@ final class DatabaseSnapshotter {
         public String quickCheck;
         public Map<String, Integer> counts;
         public int invoiceCount;
+        public int totalBusinessRecords;
         public String strategy;
     }
 
@@ -135,12 +151,14 @@ final class DatabaseSnapshotter {
                 status.put("integrityDetail", "لا توجد قاعدة بيانات بعد");
                 status.put("counts", new JSONObject());
                 status.put("invoiceCount", 0);
+                status.put("totalBusinessRecords", 0);
                 status.put("journalMode", "");
                 return status;
             }
             try (SQLiteDatabase db = openLiveReadOnly()) {
                 status.put("exists", true);
-                status.put("schemaVersion", db.getVersion());
+                int physicalVer = db.getVersion();
+                status.put("schemaVersion", physicalVer > 0 ? physicalVer : readLogicalSchemaVersion(db));
                 String journalMode = "";
                 try {
                     journalMode = queryString(db, "PRAGMA journal_mode");
@@ -157,6 +175,7 @@ final class DatabaseSnapshotter {
                 }
                 status.put("counts", counts);
                 status.put("invoiceCount", invoiceCount(db));
+                status.put("totalBusinessRecords", businessRecordCount(db));
             }
         } catch (Exception e) {
             try {
@@ -367,13 +386,15 @@ final class DatabaseSnapshotter {
                 if (!"ok".equalsIgnoreCase(snapshot.quickCheck)) {
                     throw new SnapshotException("INTEGRITY_FAILED", "فحص سلامة النسخة فشل: " + snapshot.quickCheck);
                 }
-                snapshot.schemaVersion = check.getVersion();
+                int physicalVer = check.getVersion();
+                snapshot.schemaVersion = physicalVer > 0 ? physicalVer : readLogicalSchemaVersion(check);
                 snapshot.journalMode = queryString(check, "PRAGMA journal_mode");
                 snapshot.counts = new LinkedHashMap<>();
                 for (String table : TABLES) {
                     if (tableExists(check, table)) snapshot.counts.put(table, countRows(check, table));
                 }
                 snapshot.invoiceCount = invoiceCount(check);
+                snapshot.totalBusinessRecords = businessRecordCount(check);
                 if (!snapshot.counts.containsKey("custom_invoices")) {
                     throw new SnapshotException(
                         "INTEGRITY_FAILED",
@@ -559,7 +580,10 @@ final class DatabaseSnapshotter {
                 if (!tableExists(db, "custom_invoices") || !tableExists(db, "settings")) {
                     throw new SnapshotException("INCOMPATIBLE_BACKUP", "النسخة لا تحتوي مخطط هذا التطبيق.");
                 }
-                if (outSchema != null && outSchema.length > 0) outSchema[0] = String.valueOf(db.getVersion());
+                if (outSchema != null && outSchema.length > 0) {
+                    int physicalVer = db.getVersion();
+                    outSchema[0] = String.valueOf(physicalVer > 0 ? physicalVer : readLogicalSchemaVersion(db));
+                }
                 Map<String, Integer> counts = new LinkedHashMap<>();
                 for (String table : TABLES) {
                     if (tableExists(db, table)) counts.put(table, countRows(db, table));
@@ -716,9 +740,57 @@ final class DatabaseSnapshotter {
         }
     }
 
+    /**
+     * Copies the raw live `.db` (and `-wal` if present) without opening SQLite,
+     * preserving evidence for disaster recovery when the live DB is corrupt.
+     */
+    File saveRawCorruptCopy(File destDir) {
+        if (destDir == null) return null;
+        File liveDb = databaseFile();
+        if (!liveDb.exists() || liveDb.length() <= 0) return null;
+        try {
+            if (!destDir.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                destDir.mkdirs();
+            }
+            java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US);
+            fmt.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            String stamp = fmt.format(new java.util.Date());
+            File copy = new File(destDir, "corrupt-db-" + stamp + ".db");
+            copyRawFile(liveDb, copy);
+            File wal = walFile();
+            if (wal.exists() && wal.length() > 0) {
+                copyRawFile(wal, new File(destDir, copy.getName() + "-wal"));
+            }
+            return copy;
+        } catch (Exception e) {
+            Log.w(TAG, "failed to save raw corrupt database copy", e);
+            return null;
+        }
+    }
+
+    private static void copyRawFile(File src, File dst) throws IOException {
+        try (InputStream in = new FileInputStream(src); java.io.FileOutputStream out = new java.io.FileOutputStream(dst)) {
+            byte[] buf = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buf)) != -1) {
+                out.write(buf, 0, read);
+            }
+            out.flush();
+        }
+    }
+
     private static int invoiceCount(SQLiteDatabase db) {
         int total = 0;
         for (String t : new String[] { "custom_invoices", "proforma_invoices", "print_invoices" }) {
+            if (tableExists(db, t)) total += countRows(db, t);
+        }
+        return total;
+    }
+
+    private static int businessRecordCount(SQLiteDatabase db) {
+        int total = 0;
+        for (String t : BUSINESS_TABLES) {
             if (tableExists(db, t)) total += countRows(db, t);
         }
         return total;

@@ -25,6 +25,7 @@ function hasExistingLocalDatabaseData(discovery: DiscoveryState | null): boolean
   const db = discovery?.loaded?.database;
   if (!db) return false;
   if ((db.invoiceCount ?? 0) > 0) return true;
+  if ((db.totalBusinessRecords ?? 0) > 0) return true;
   const counts = db.counts ?? {};
   return (
     (counts.custom_invoices ?? 0) > 0 ||
@@ -33,8 +34,10 @@ function hasExistingLocalDatabaseData(discovery: DiscoveryState | null): boolean
     (counts.customers ?? 0) > 0 ||
     (counts.orders ?? 0) > 0 ||
     (counts.customer_payments ?? 0) > 0 ||
+    (counts.supplier_payments ?? 0) > 0 ||
     (counts.suppliers ?? 0) > 0 ||
-    (counts.expenses ?? 0) > 0
+    (counts.expenses ?? 0) > 0 ||
+    (counts.official_letters ?? 0) > 0
   );
 }
 
@@ -254,6 +257,26 @@ export function RecoveryDiscoveryGate({
           <>
             <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/20 p-3.5 text-xs">
               <RecoveryRow label="عدد الفواتير" value={`${manifest.invoiceCount} فاتورة`} strong />
+              {(manifest.counts?.customers ?? 0) > 0 && (
+                <RecoveryRow label="العملاء" value={`${manifest.counts.customers} عميل`} />
+              )}
+              {(manifest.counts?.official_letters ?? 0) > 0 && (
+                <RecoveryRow label="الخطابات الرسمية" value={`${manifest.counts.official_letters} خطاب`} />
+              )}
+              {((manifest.counts?.customer_payments ?? 0) +
+                (manifest.counts?.supplier_payments ?? 0) +
+                (manifest.counts?.expenses ?? 0) +
+                (manifest.counts?.suppliers ?? 0)) > 0 && (
+                <RecoveryRow
+                  label="السجلات المالية"
+                  value={`${
+                    (manifest.counts?.customer_payments ?? 0) +
+                    (manifest.counts?.supplier_payments ?? 0) +
+                    (manifest.counts?.expenses ?? 0) +
+                    (manifest.counts?.suppliers ?? 0)
+                  } سجل`}
+                />
+              )}
               <RecoveryRow label="آخر نسخة احتياطية" value={formatDateTime(manifest.createdAt)} />
               <RecoveryRow label="حجم النسخة" value={formatBytes(newest.sizeBytes)} />
               <RecoveryRow
