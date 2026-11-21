@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronsRight,
   ChevronsLeft,
+  Calendar,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import type { StatementLine } from "@/lib/repositories/ReportsRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { playTapSound } from "@/lib/soundEffects";
+import { getLocalIsoDate } from "@/lib/dateUtils";
 
 export type StatementTypeFilter = "all" | "invoice" | "receipt" | "opening_balance";
 
@@ -19,6 +21,9 @@ interface CustomerDetailStatementTabProps {
   setStatementSearch: (v: string) => void;
   statementTypeFilter: StatementTypeFilter;
   setStatementTypeFilter: (f: StatementTypeFilter) => void;
+  statementFrom?: string;
+  statementTo?: string;
+  onStatementRangeChange?: (from: string, to: string) => void;
   statementPageSize: number;
   setStatementPageSize: (n: number) => void;
   selectedCurrency: string;
@@ -34,6 +39,9 @@ export function CustomerDetailStatementTab({
   setStatementSearch,
   statementTypeFilter,
   setStatementTypeFilter,
+  statementFrom = "",
+  statementTo = "",
+  onStatementRangeChange,
   statementPageSize,
   setStatementPageSize,
   selectedCurrency,
@@ -43,8 +51,82 @@ export function CustomerDetailStatementTab({
   setStatementPage,
   totalStatementPages,
 }: CustomerDetailStatementTabProps) {
+  const applyPreset = (preset: "month" | "year" | "all") => {
+    if (!onStatementRangeChange) return;
+    playTapSound();
+    if (preset === "all") {
+      onStatementRangeChange("", "");
+      return;
+    }
+    const today = getLocalIsoDate();
+    if (preset === "month") {
+      onStatementRangeChange(`${today.slice(0, 7)}-01`, today);
+    } else {
+      onStatementRangeChange(`${today.slice(0, 4)}-01-01`, today);
+    }
+  };
+
   return (
     <div className="space-y-3">
+      {onStatementRangeChange && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-card p-3 rounded-2xl border border-border/70 shadow-2xs">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-foreground">
+              <Calendar className="h-3.5 w-3.5 text-primary" />
+              <span>فترة الكشف:</span>
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-muted-foreground">من</span>
+              <Input
+                type="date"
+                aria-label="فترة الكشف من تاريخ"
+                value={statementFrom}
+                onChange={(e) => onStatementRangeChange(e.target.value, statementTo)}
+                className="h-8 w-[132px] rounded-lg text-[11px] font-mono bg-background"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-muted-foreground">إلى</span>
+              <Input
+                type="date"
+                aria-label="فترة الكشف إلى تاريخ"
+                value={statementTo}
+                onChange={(e) => onStatementRangeChange(statementFrom, e.target.value)}
+                className="h-8 w-[132px] rounded-lg text-[11px] font-mono bg-background"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => applyPreset("month")}
+              className="rounded-lg px-2.5 py-1 text-[10.5px] font-bold bg-secondary/70 hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+            >
+              هذا الشهر
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset("year")}
+              className="rounded-lg px-2.5 py-1 text-[10.5px] font-bold bg-secondary/70 hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+            >
+              هذا العام
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset("all")}
+              className={`rounded-lg px-2.5 py-1 text-[10.5px] font-bold transition-colors cursor-pointer ${
+                !statementFrom && !statementTo
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary/70 hover:bg-primary/10 hover:text-primary"
+              }`}
+            >
+              الكل
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-card p-3 rounded-2xl border border-border/70 shadow-2xs">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />

@@ -100,6 +100,8 @@ export function CustomerDetailPage({
   const [statementSearch, setStatementSearch] = useState("");
   const deferredStatementSearch = useDeferredValue(statementSearch);
   const [statementTypeFilter, setStatementTypeFilter] = useState<StatementTypeFilter>("all");
+  const [statementFrom, setStatementFrom] = useState("");
+  const [statementTo, setStatementTo] = useState("");
   const [statementPage, setStatementPage] = useState(1);
   const [statementPageSize, setStatementPageSize] = useState(20);
 
@@ -126,7 +128,7 @@ export function CustomerDetailPage({
     );
   }, [allCustomInvoices, customer.id, customer.name]);
 
-  const loadAllCustomerData = async () => {
+  const loadAllCustomerData = async (fromOverride?: string, toOverride?: string) => {
     if (!customer?.id) return;
     setIsLoading(true);
     try {
@@ -140,7 +142,13 @@ export function CustomerDetailPage({
       const defaultCur = profile.primaryCurrency || "SDG";
       setSelectedCurrency(defaultCur);
 
-      const stmt = await getCustomerStatement(customer.id, {}, defaultCur);
+      const effectiveFrom = fromOverride !== undefined ? fromOverride : statementFrom;
+      const effectiveTo = toOverride !== undefined ? toOverride : statementTo;
+      const stmt = await getCustomerStatement(
+        customer.id,
+        { from: effectiveFrom || undefined, to: effectiveTo || undefined },
+        defaultCur
+      );
       setStatement(stmt);
     } catch (err) {
       console.error("[CustomerDetailPage] Failed to load customer data:", err);
@@ -166,7 +174,25 @@ export function CustomerDetailPage({
     setSelectedCurrency(cur);
     setInvoicePage(1);
     if (customer?.id) {
-      const stmt = await getCustomerStatement(customer.id, {}, cur);
+      const stmt = await getCustomerStatement(
+        customer.id,
+        { from: statementFrom || undefined, to: statementTo || undefined },
+        cur
+      );
+      setStatement(stmt);
+    }
+  };
+
+  const handleStatementRangeChange = async (fromVal: string, toVal: string) => {
+    setStatementFrom(fromVal);
+    setStatementTo(toVal);
+    setStatementPage(1);
+    if (customer?.id) {
+      const stmt = await getCustomerStatement(
+        customer.id,
+        { from: fromVal || undefined, to: toVal || undefined },
+        selectedCurrency
+      );
       setStatement(stmt);
     }
   };
@@ -745,6 +771,9 @@ export function CustomerDetailPage({
                 setStatementSearch={setStatementSearch}
                 statementTypeFilter={statementTypeFilter}
                 setStatementTypeFilter={setStatementTypeFilter}
+                statementFrom={statementFrom}
+                statementTo={statementTo}
+                onStatementRangeChange={handleStatementRangeChange}
                 statementPageSize={statementPageSize}
                 setStatementPageSize={setStatementPageSize}
                 selectedCurrency={selectedCurrency}

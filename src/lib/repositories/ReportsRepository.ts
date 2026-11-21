@@ -439,6 +439,9 @@ export interface CustomerStatement {
   outstanding: number;
   netBalance: number;
   openingBalance: number;
+  broughtForwardBalance?: number;
+  periodFrom?: string;
+  periodTo?: string;
 }
 
 export async function getCustomerStatement(
@@ -483,6 +486,7 @@ export async function getCustomerStatement(
   const openingDate = String(cRow.opening_balance_date || cRow.created_at || "2026-01-01").slice(0, 10);
   const hasOpening = openingBal > 0 && openingCur === targetCurrency;
   const isOpeningCredit = cRow.opening_balance_type === "credit";
+  let broughtForwardBalance = 0;
 
   if (range.from) {
     const priorInvRes = await db.query(
@@ -505,6 +509,7 @@ export async function getCustomerStatement(
     const broughtForward = round2(
       priorOpeningSigned + num(priorInvRes.values?.[0]?.total) - num(priorPayRes.values?.[0]?.total)
     );
+    broughtForwardBalance = broughtForward;
     if (Math.abs(broughtForward) > 0.009) {
       events.push({
         date: range.from,
@@ -591,6 +596,12 @@ export async function getCustomerStatement(
   const totalCollected = lines.reduce((sum, line) => sum + line.credit, 0);
   const netBalance = round2(running);
 
+  const todayIso = getLocalIsoDate();
+  const earliestLineDate = lines.find((l) => Boolean(l.date))?.date;
+  const customerCreatedIso = cRow.created_at ? String(cRow.created_at).slice(0, 10) : "";
+  const periodFrom = range.from || earliestLineDate || customerCreatedIso || todayIso;
+  const periodTo = range.to || todayIso;
+
   return {
     customerId,
     customerName,
@@ -601,6 +612,9 @@ export async function getCustomerStatement(
     outstanding: round2(Math.max(0, netBalance)),
     netBalance,
     openingBalance: round2(openingInPeriod ? openingBal : 0),
+    broughtForwardBalance,
+    periodFrom,
+    periodTo,
   };
 }
 
