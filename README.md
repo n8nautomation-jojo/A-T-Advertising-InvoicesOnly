@@ -1,138 +1,114 @@
-# T.A Advertising Solution — نظام حاسبة وإدارة الفواتير التجارية
+# T.A Advertising Solution — نظام الإدارة المالية والفوترة التجارية (`v2.3.1`)
 
-نظام رقمي تجاري متكامل للمطابع ووكالات الدعاية والإعلان لحساب تكاليف ومقاسات الرولات، إصدار عروض الأسعار، إدارة فواتير المبيعات والمشتريات الرسمية (A5)، وتتبع سجل الطلبات وتوليد وطباعة ملفات PDF بجودة فائقة.
+نظام تجاري ومحاسبي متكامل يعمل دون إنترنت (**Offline-First**) مخصص لوكالات الدعاية والإعلان والمطابع، لإدارة الفواتير وعروض الأسعار، حسابات العملاء والموردين، الخزينة والمصروفات، الخطابات الرسمية المروّسة، حاسبة تكاليف الطباعة، والتقارير المالية متعددة العملات، مع محرك نسخ احتياطي مشفّر وإخراج مستندات PDF بدقة الطباعة الاحترافية (`300 DPI`).
 
----
-
-## 🚀 التقنيات المستخدمة (Tech Stack)
-
-* **الواجهة الأمامية**: React 18, TypeScript, Vite
-* **إدارة المسارات والصفحات**: TanStack Router
-* **إدارة الحالة والبيانات**: TanStack Query (React Query)
-* **التصميم والتنسيق**: Tailwind CSS v4, Lucide React Icons, Radix UI
-* **تصدير الفواتير والطباعة**: html2pdf.js, jsPDF, html2canvas, DOMPurify
-* **تطبيق الهواتف الذكية**: Capacitor 7 (Android Native Platform)
-* **الأمان والخصوصية**: Capacitor Biometric Auth (بصمة الإصبع ورمز الحماية)
+> **دليل العميل والتعريف بالنظام:** للاطلاع على الشرح المبسط والاحترافي الموجّه للعملاء حول كيف تم بناء التطبيق، الأدوات المستخدمة، وكيف تعمل قوالب الفواتير والخطابات وكشوفات الحساب، راجع الملف المخصص: **[`CLIENT_ARCHITECTURE_GUIDE.md`](./CLIENT_ARCHITECTURE_GUIDE.md)**.
 
 ---
 
-## 📁 هيكلية المشروع (Project Architecture)
+## أبرز قدرات النظام الحالية (`v2.3.1-lifetime` / Schema v7)
+
+- **الفواتير والمبيعات والمشتريات وعروض الأسعار:** فواتير A4 الرسمية (مبيعات، مشتريات، مبدئية)، عروض الأسعار مع التحويل المباشر لفاتورة، وفواتير الحاسبة السريعة A5، بدعم اللغتين العربية (`RTL`) والإنجليزية (`LTR`) والتفقيط التلقائي.
+- **العملات المتعددة (`SDG` · `USD` · `SAR` · `EGP`):** فصل تام للأرصدة والفواتير والدفعات وكشوفات الحساب لكل عملة دون خلط حسابي.
+- **إدارة العملاء والموردين:** دليل عملاء وموردين متكامل مع أرصدة افتتاحية، تحصيل وسداد دفعات وتوزيعها على الفواتير، وكشف حساب تنفيذي A4 محدد بفترة زمنية.
+- **الخزينة والمصروفات والطلبات:** إدارة الصناديق والحسابات البنكية، قيود الحركات المالية، تتبع المصروفات التشغيلية وسدادها، وسجل الطلبات.
+- **الخطابات الرسمية المروّسة (`Official Letters`):** محرر خطابات ثنائي اللغة بـ 4 قوالب جاهزة مع أرقام مرجعية تلقائية (`LTR-YY-NNNN`)، علامة مائية، ختم رسمي، توقيع، ورمز `QR`.
+- **حاسبة الطباعة وتوزيع الرولات:** حساب تكاليف ومساحات التشغيل وإصدار إيصالات A5 فورية.
+- **التقارير المالية التنفيذية:** تقارير الأرباح والمبيعات والتحصيلات والمديونيات وأرصدة الحسابات بعمليات استعلام محسّنة.
+- **النسخ الاحتياطي المشفر والصيانة الذاتية:** أرشيف `.tabk` مضغوط (`GZIP`) ومشفّر (`AES-256-GCM`) مع مفتاح استرداد (`TAKEY-...`)، جدولة يومية (`WorkManager`) + نسخ تلقائي بعد المعاملات، ووحدة فحص وإصلاح ذاتي لقاعدة البيانات عند الإقلاع.
+- **الأمان والخصوصية:** قفل بالبصمة البيومترية وبكلمة المرور.
+
+---
+
+## التقنيات المستخدمة (Tech Stack)
+
+- **الواجهة الأمامية:** React 19, TypeScript 5.8, Vite 6
+- **التوجيه وإدارة العرض:** TanStack Router, Tailwind CSS v4, Radix UI, Lucide React
+- **التخزين المحلي وقاعدة البيانات:** `@capacitor-community/sqlite` (`net.zetetic:sqlcipher-android`, وضع `WAL`) عبر 16 مستودع بيانات (`src/lib/repositories/`) ومخطط موثق بالإصدار `v7`
+- **منصة أندرويد والخدمات الأصلية:** Capacitor 7 (Android), Java Native Plugins:
+  - [`NativePdfExporter.java`](android/app/src/main/java/com/futureprint/calculator/NativePdfExporter.java) — محرك تصدير PDF أصلي عبر Chromium WebView بدقة `300 DPI`
+  - [`BackupPlugin.java`](android/app/src/main/java/com/futureprint/calculator/backup/BackupPlugin.java) و[`BackupEngine.java`](android/app/src/main/java/com/futureprint/calculator/backup/BackupEngine.java) — محرك النسخ الاحتياطي، التشفير، الدمج، والفحص الذاتي عبر [`SqlCipherBridge.java`](android/app/src/main/java/com/futureprint/calculator/backup/SqlCipherBridge.java)
+- **تصدير الويب الاحتياطي:** `jsPDF`, `html2canvas`
+- **الاختبارات والتحقق:** Vitest (`38` ملف اختبار · `362` حالة اختبار) + JUnit لاختبارات الأرشفة في أندرويد
+
+---
+
+## هيكلية المشروع (Project Architecture)
 
 ```text
-A-T-Advertising/
+A-T-Advertising-InvoicesOnly/
+├── CLIENT_ARCHITECTURE_GUIDE.md      # الدليل التنفيذي الموجّه للعملاء (القوالب والتقنيات)
 ├── src/
-│   ├── assets/                # الشعارات والأختام والصور المشفرة Base64
-│   ├── components/            # مكونات الواجهة (الحاسبة، الفواتير، السجل، التصميم)
-│   │   ├── billing/           # محرك إصدار الفواتير المخصصة والطباعة الذكية
-│   │   ├── calculator/        # حاسبة تسعير وتوزيع الرولات المتطورة
-│   │   ├── common/            # المكونات المشتركة وشاشة البداية الملكية
-│   │   ├── invoices/          # قوالب الفواتير الرسمية A5 والموحدة
-│   │   ├── layout/            # القائمة الجانبية والشريط العلوي
-│   │   └── proforma/          # عروض الأسعار والمطالبات الأولية
-│   ├── hooks/                 # الخطافات المخصصة (الثيم، الحالة)
-│   ├── lib/                   # دوال الحسابات، قواعد البيانات المحلية، التشفير
-│   ├── routes/                # مسارات التطبيق المعرفة عبر TanStack Router
-│   ├── styles.css             # تخصيصات وهوية T.A الزمردية والأوبسيديان
-│   └── main.tsx               # نقطة انطلاق التطبيق
-├── android/                   # مشروع أندرويد ستوديو الأصلي و Gradle
-├── public/                    # الأصول الثابتة والشعارات
-├── capacitor.config.ts        # إعدادات تطبيق أندرويد كاباسيتور
-├── vite.config.ts             # إعدادات التجميع السريع Vite
-└── package.json               # التبعيات والأوامر البرمجية
+│   ├── assets/                       # الشعارات، الختم، التوقيع، والباركود مدمجة للاستخدام دون إنترنت
+│   ├── components/
+│   │   ├── billing/                  # فواتير المبيعات والمشتريات A4 ومحرك المعاينة والطباعة
+│   │   ├── calculator/               # حاسبة تكاليف ومقاسات الطباعة
+│   │   ├── customers/                # دليل العملاء، الصفحة التفصيلية، وكشف الحساب المالي
+│   │   ├── expenses/                 # إدارة المصروفات وسدادها
+│   │   ├── finance/                  # الخزينة، الحسابات البنكية، والحركات المالية
+│   │   ├── invoices/                 # السجل الموحد لجميع الفواتير
+│   │   ├── layout/                   # الهيكل العام، القائمة الجانبية، والتنقل السفلي
+│   │   ├── letters/                  # وحدة الخطابات الرسمية المروّسة وقوالبها
+│   │   ├── proforma/                 # عروض الأسعار الرسمية A4 والتحويل للفواتير
+│   │   ├── reports/                  # شاشات التقارير المالية والتحليلية
+│   │   ├── settings/                 # الإعدادات، ملف الشركة، وإدارة النسخ الاحتياطي والاسترداد
+│   │   └── suppliers/                # إدارة الموردين والمدفوعات
+│   ├── lib/
+│   │   ├── backup/                   # تنسيق النسخ الاحتياطي، الفحص الذاتي، والجدولة التلقائية
+│   │   ├── currency/                 # العملات المتعددة وقواعد التفقيط العربي والإنجليزي
+│   │   ├── database/                 # مدير اتصال SQLite، قفل الكتابة FIFO، والترحيل (v1 -> v7)
+│   │   ├── letters/                  # مخزن وقوالب الخطابات الرسمية
+│   │   ├── repositories/             # مستودعات الوصول للبيانات (16 مستودعاً)
+│   │   ├── customerStatementExport.ts# مولّد كشف الحساب الرسمي A4
+│   │   ├── pdfExport.ts              # محرك تحضير HTML المستقل والتصدير عبر Chromium/jsPDF
+│   │   └── sqliteStorage.ts          # جسر التخزين السريع مع الكشف والاستنقاذ التلقائي
+│   ├── routes/                       # مسارات الصفحات المعرّفة عبر TanStack Router
+│   └── main.tsx                      # نقطة انطلاق التطبيق والفحص الاستباقي عند الإقلاع
+├── android/                          # مشروع أندرويد الأصلي (Gradle + Backup Engine + Native PDF)
+├── docs/                             # تقارير الأداء، السعة، والجاهزية الإنتاجية
+├── capacitor.config.ts
+├── vite.config.ts
+└── package.json
 ```
 
 ---
 
-## 🛠️ أوامر التشغيل والبناء (Development & Build)
+## أوامر التشغيل والاختبار والبناء
 
-### 1. تثبيت التبعيات (Dependencies)
+### 1. تثبيت التبعيات
 ```bash
 npm install
 ```
 
-### 2. تشغيل السيرفر المحلي للتطوير (Local Dev Server)
+### 2. تشغيل خادم التطوير المحلي
 ```bash
 npm run dev
 ```
 
-### 3. فحص الأنواع وبناء ملفات الإنتاج (Production Web Build)
+### 3. تشغيل الاختبارات الآلية (Vitest)
+```bash
+npm run test
+```
+
+### 4. فحص الأنواع وبناء حزمة الإنتاج
 ```bash
 npm run build
 ```
 
-### 4. مزامنة كود الواجهة مع تطبيق الأندرويد (Capacitor Sync)
+### 5. مزامنة ملفات الويب مع مشروع أندرويد
 ```bash
 npm run cap:build
-# أو
-npx cap sync android
+# أو لمزامنة الأصول فقط:
+npm run cap:sync
 ```
 
-### 5. تجميع حزمة تطبيق الأندرويد (Build APK)
+### 6. بناء حزمة أندرويد (APK)
 ```bash
 cd android
+./gradlew assembleRelease
+# أو لبناء نسخة التطوير:
 ./gradlew assembleDebug
-# على نظام ويندوز:
-.\gradlew.bat assembleDebug
 ```
-ملف الـ APK الناتج سيكون في المسار:
-`android/app/build/outputs/apk/debug/app-debug.apk`
-
----
-
-## 🌐 دليل رفع الكود على GitHub باستخدام الـ PAT (Personal Access Token)
-
-### الخطوة 1: تهيئة Git محلياً (إذا لم تكن مهيأة)
-```bash
-git init
-git add .
-git commit -m "feat: initial commit - T.A Advertising Solution v1.5.3"
-git branch -M main
-```
-
-### الخطوة 2: استخراج رمز الوصول الشخصي (GitHub PAT)
-1. افتح حسابك على [GitHub Settings > Developer Settings](https://github.com/settings/tokens).
-2. اختر **Personal access tokens** -> **Tokens (classic)**.
-3. اضغط على **Generate new token (classic)**.
-4. سمِّ الرمز مثلاً `Antigravity-Remote-Agent`، وحدد مدة الصلاحية، وفعّل صلاحية **`repo`** بالكامل.
-5. انسخ الرمز المولد فوراً (مثال: `ghp_xxxxxxxxxxxxxxxxxxxxxx`).
-
-### الخطوة 3: ربط المستودع ورفع الكود (Remote Add & Push)
-استبدل `<USERNAME>` باسم حسابك و `<REPO_NAME>` باسم المستودع:
-
-```bash
-git remote add origin https://github.com/<USERNAME>/<REPO_NAME>.git
-git push -u origin main
-```
-*عند المطالبة باسم المستخدم وكلمة المرور في التيرمينال:*
-* **Username**: اكتب اسم مستخدم GitHub الخاص بك.
-* **Password**: الصق رمز الـ **PAT** الذي قمت بنسخه (وليس كلمة سر الحساب العادية).
-
-> **أو بصيغة مباشرة تتضمن الـ PAT (دون الحاجة لإدخال بيانات):**
-> ```bash
-> git remote set-url origin https://<YOUR_PAT>@github.com/<USERNAME>/<REPO_NAME>.git
-> git push -u origin main
-> ```
-
----
-
-## 🤖 متابعة التطوير عبر وكيل Antigravity عن بُعد (Remote Agent)
-
-عند الانتقال إلى بيئة **Antigravity Remote Agent**:
-
-1. **استنساخ المستودع عن بعد**:
-   ```bash
-   git clone https://<YOUR_PAT>@github.com/<USERNAME>/<REPO_NAME>.git
-   cd <REPO_NAME>
-   ```
-2. **تثبيت الحزم وبدء العمل الفوري**:
-   ```bash
-   npm install
-   npm run dev
-   ```
-3. عند استخراج التعديلات ورفعها مجدداً:
-   ```bash
-   git add .
-   git commit -m "update: feature improvements"
-   git push origin main
-   ```
-
+تُحفظ الحزم الناتجة داخل المسار:
+- `android/app/build/outputs/apk/release/`
+- `android/app/build/outputs/apk/debug/`

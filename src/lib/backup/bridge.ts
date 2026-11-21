@@ -45,6 +45,15 @@ interface NativePluginApi {
   importRecoveryKey(options: { recoveryKey: string }): Promise<{ ok: boolean; keyId?: string; errorCode?: string; message?: string }>;
   getEncryptionInfo(): Promise<{ ok: boolean; hasKey: boolean; keyId: string; keystoreAvailable: boolean; keyCount: number }>;
   preparePreUpdateBackup(options: { appVersion: string; targetSchema: number }): Promise<{ ok: boolean; skipped?: boolean; skipReason?: string; backupId?: string; fileName?: string; message?: string }>;
+  ensureDatabaseHealthy(options?: { forceRepair?: boolean }): Promise<{
+    ok: boolean;
+    status: "missing" | "healthy" | "repaired" | "quarantined_reset" | "error";
+    salvagedRecords?: number;
+    salvagedInvoices?: number;
+    salvagedCustomers?: number;
+    errorCode?: string;
+    message?: string;
+  }>;
 }
 
 interface NativeStatus {
@@ -144,6 +153,7 @@ const NATIVE_COMMANDS = [
   "importRecoveryKey",
   "getEncryptionInfo",
   "preparePreUpdateBackup",
+  "ensureDatabaseHealthy",
 ] as const;
 
 /**
@@ -324,6 +334,18 @@ export const backupBridge = {
     targetSchema: number
   ): Promise<{ ok: boolean; skipped?: boolean; skipReason?: string; backupId?: string; fileName?: string; message?: string }> {
     return callNative("preparePreUpdateBackup", { appVersion, targetSchema });
+  },
+
+  async ensureDatabaseHealthy(options?: { forceRepair?: boolean }): Promise<{
+    ok: boolean;
+    status: "missing" | "healthy" | "repaired" | "quarantined_reset" | "error";
+    salvagedRecords?: number;
+    salvagedInvoices?: number;
+    salvagedCustomers?: number;
+    errorCode?: string;
+    message?: string;
+  }> {
+    return callNative("ensureDatabaseHealthy", { forceRepair: Boolean(options?.forceRepair) });
   },
 };
 

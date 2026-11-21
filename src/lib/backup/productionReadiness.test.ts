@@ -63,6 +63,7 @@ vi.mock("@capacitor/preferences", () => ({
 vi.mock("@/lib/database", () => ({
   getDb: async () => mockState.db,
   closeDb: async () => {},
+  withDbWriteLock: async <T>(fn: () => Promise<T>) => fn(),
 }));
 
 vi.mock("sonner", () => ({

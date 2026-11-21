@@ -35,6 +35,10 @@ export function withDbTransaction<T>(
       await db.commitTransaction();
       return result;
     } catch (err) {
+      const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+      if (msg.includes("malformed") || msg.includes("code 11") || msg.includes("sqlite_corrupt")) {
+        console.error("[DB] Transaction hit SQLite corruption:", err);
+      }
       try {
         await db.rollbackTransaction();
       } catch (rollbackErr) {

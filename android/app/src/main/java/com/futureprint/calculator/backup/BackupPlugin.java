@@ -401,6 +401,14 @@ public class BackupPlugin extends Plugin {
         background(call, () -> new JSObject(engine().preparePreUpdateBackup(finalAppVersion, finalTargetSchema).toString()));
     }
 
+    @PluginMethod
+    public void ensureDatabaseHealthy(PluginCall call) {
+        final JSONObject options = optionsOf(call);
+        boolean forceFlag = Boolean.TRUE.equals(call != null ? call.getBoolean("forceRepair", false) : Boolean.FALSE);
+        final boolean forceRepair = forceFlag || options.optBoolean("forceRepair", false);
+        background(call, () -> new JSObject(engine().ensureDatabaseHealthy(forceRepair).toString()));
+    }
+
     private JSONObject optionsOf(PluginCall call) {
         if (call == null) return new JSONObject();
         try {

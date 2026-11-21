@@ -6,9 +6,14 @@ import { Capacitor } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import { triggerBack } from "./lib/backButtonHandler";
-import { initSQLiteStorage } from "./lib/sqliteStorage";
+import { initSQLiteStorage, hasSQLiteInitError } from "./lib/sqliteStorage";
 import { ensureScheduledBackups } from "./lib/backup/autoBackup";
-import { runPreMigrationNativeBackup, runPreUpdateBackupIfNeeded } from "./lib/backup/restoreService";
+import {
+  consumeLastDatabaseHealthReport,
+  ensureNativeDatabaseHealthy,
+  runPreMigrationNativeBackup,
+  runPreUpdateBackupIfNeeded,
+} from "./lib/backup/restoreService";
 import { toast } from "sonner";
 import "./styles.css";
 
@@ -25,10 +30,11 @@ if (typeof window !== "undefined") {
   });
 }
 
-// أخذ نسخة أمان أصلية قبل فتح قاعدة البيانات أو تشغيل أي ترحيل، ثم تهيئة SQLite
+// فحص سلامة قاعدة البيانات وإصلاحها ذاتياً ثم أخذ نسخة أمان قبل فتح SQLite أو تشغيل أي ترحيل
 const storageInitPromise = (async () => {
   if (Capacitor.isNativePlatform()) {
-    await runPreMigrationNativeBackup(4000);
+    await ensureNativeDatabaseHealthy(false, 15_000);
+    await runPreMigrationNativeBackup(15_000);
   }
   await initSQLiteStorage();
   if (typeof window !== "undefined") {
@@ -39,12 +45,34 @@ const storageInitPromise = (async () => {
 });
 
 /**
- * نسخة احتياطية قبل أي ترقية لقاعدة البيانات + إعادة تثبيت الجدولة اليومية.
- * تعمل بعد نجاح تهيئة قاعدة البيانات وقبل أن يلمس المستخدم أي بيانات.
+ * نسخة احتياطية قبل أي ترقية لقاعدة البيانات + إعادة تثبيت الجدولة اليومية
+ * + إظهار أي تنبيه يتعلق بإصلاح قاعدة البيانات تلقائياً عند الإقلاع.
  */
 void storageInitPromise.then(async () => {
   if (!Capacitor.isNativePlatform()) return;
   try {
+    const repairReport = consumeLastDatabaseHealthReport();
+    if (repairReport?.status === "repaired") {
+      setTimeout(() => {
+        toast.success(
+          repairReport.message || "تم اكتشاف تلف في قاعدة البيانات وإصلاحه واستعادة السجلات تلقائياً.",
+          { duration: 7000 }
+        );
+      }, 600);
+    } else if (repairReport?.status === "quarantined_reset") {
+      setTimeout(() => {
+        toast.warning(
+          repairReport.message || "تعذّر إصلاح ملف قاعدة البيانات التالف. يمكنك استعادة آخر نسخة احتياطية من الإعدادات.",
+          { duration: 9000 }
+        );
+      }, 600);
+    } else if (hasSQLiteInitError()) {
+      setTimeout(() => {
+        toast.error("حدث خلل عند فتح قاعدة البيانات. افتح إعدادات النسخ الاحتياطي لفحصها أو استعادة نسخة.", {
+          duration: 8000,
+        });
+      }, 600);
+    }
     await runPreUpdateBackupIfNeeded(true);
     await ensureScheduledBackups();
   } catch (err) {

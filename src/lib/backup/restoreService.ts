@@ -27,19 +27,68 @@ import type { RestoreMode, RestoreResult } from "./types";
 
 const PRE_UPDATE_MARKER = "backup_pre_update_done_v";
 
+export interface DatabaseHealthReport {
+  ok: boolean;
+  status: "missing" | "healthy" | "repaired" | "quarantined_reset" | "error";
+  salvagedRecords?: number;
+  salvagedInvoices?: number;
+  salvagedCustomers?: number;
+  errorCode?: string;
+  message?: string;
+}
+
+let _lastHealthReport: DatabaseHealthReport | null = null;
+
+export function consumeLastDatabaseHealthReport(): DatabaseHealthReport | null {
+  const report = _lastHealthReport;
+  _lastHealthReport = null;
+  return report;
+}
+
+/**
+ * Verifies SQLite integrity via SQLCipher BEFORE CapacitorSQLite/WebView opens
+ * the DB (or triggers forced repair after closing the connection), salvaging
+ * any corrupt B-tree/WAL into a clean SQLite file automatically.
+ */
+export async function ensureNativeDatabaseHealthy(
+  forceRepair = false,
+  timeoutMs = 15_000
+): Promise<DatabaseHealthReport | null> {
+  if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable()) return null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const res = await Promise.race([
+      backupBridge.ensureDatabaseHealthy({ forceRepair }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), Math.max(2_000, timeoutMs));
+      }),
+    ]);
+    if (res && (res.status === "repaired" || res.status === "quarantined_reset" || !res.ok)) {
+      _lastHealthReport = res;
+      console.warn("[DB Health] self-repair outcome:", res.status, res.message);
+    }
+    return res;
+  } catch (err) {
+    console.warn("[DB Health] check failed:", err);
+    return null;
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
 /**
  * Takes a native pre-update snapshot BEFORE `initSQLiteStorage()` opens SQLite
- * and runs any pending schema migrations. Bounded by a timeout and never throws
- * so startup can never hang or crash.
+ * and runs any pending schema migrations. Bounded by a generous timeout so
+ * native VACUUM INTO completes cleanly before CapacitorSQLite opens the file.
  */
-export async function runPreMigrationNativeBackup(timeoutMs = 5000): Promise<void> {
+export async function runPreMigrationNativeBackup(timeoutMs = 15_000): Promise<void> {
   if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable()) return;
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
     const result = await Promise.race([
       backupBridge.preparePreUpdateBackup(APP_VERSION, DB_VERSION),
       new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), Math.max(500, timeoutMs));
+        timer = setTimeout(() => resolve(null), Math.max(1_000, timeoutMs));
       }),
     ]);
     if (result && result.ok && !result.skipped && result.fileName) {

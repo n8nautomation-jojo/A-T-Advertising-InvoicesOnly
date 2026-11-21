@@ -1,8 +1,12 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CustomerDetailPage } from "./CustomerDetailPage";
 import { getCustomerFinancialSummary, type CustomerRecord } from "@/lib/customersStore";
+
+afterEach(() => {
+  cleanup();
+});
 
 vi.mock("@/components/layout/PageShell", () => ({
   PageShell: ({ children }: { children: React.ReactNode }) => <div data-testid="page-shell">{children}</div>,

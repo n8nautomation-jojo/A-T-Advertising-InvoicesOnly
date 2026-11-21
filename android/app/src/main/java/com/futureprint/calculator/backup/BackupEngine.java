@@ -3,7 +3,6 @@ package com.futureprint.calculator.backup;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
 import android.util.Base64;
 import android.util.Log;
@@ -771,11 +770,7 @@ public final class BackupEngine {
             Map<String, Integer> added = new LinkedHashMap<>();
             boolean relationsOk = true;
             try (
-                SQLiteDatabase live = SQLiteDatabase.openDatabase(
-                    snapshotter.databaseFile().getAbsolutePath(),
-                    null,
-                    SQLiteDatabase.OPEN_READWRITE
-                )
+                SqlCipherBridge.DbSession live = SqlCipherBridge.openStandaloneSqlCipher(snapshotter.databaseFile(), false, false)
             ) {
                 queryString(live, "PRAGMA busy_timeout = 5000");
                 // Must be enabled BEFORE beginTransaction() in SQLite.
@@ -824,26 +819,20 @@ public final class BackupEngine {
      * implements the schema-upgrade handshake with the web layer.
      */
     public boolean databaseOpensAfterRestore() {
-        try (
-            SQLiteDatabase db = SQLiteDatabase.openDatabase(
-                snapshotter.databaseFile().getAbsolutePath(),
-                null,
-                SQLiteDatabase.OPEN_READONLY
-            )
-        ) {
+        try (SqlCipherBridge.DbSession db = SqlCipherBridge.borrowLiveOrOpenSqlCipher(snapshotter.databaseFile(), true)) {
             return "ok".equalsIgnoreCase(queryString(db, "PRAGMA quick_check"));
         } catch (Exception e) {
             return false;
         }
     }
 
-    private String queryString(SQLiteDatabase db, String sql) {
+    private String queryString(SqlCipherBridge.DbSession db, String sql) throws Exception {
         try (Cursor c = db.rawQuery(sql, null)) {
             return c.moveToFirst() ? c.getString(0) : "";
         }
     }
 
-    private int mergeTable(SQLiteDatabase db, String table) throws JSONException {
+    private int mergeTable(SqlCipherBridge.DbSession db, String table) throws Exception {
         // Column lists are enumerated from PRAGMA so schema evolution on either
         // side cannot produce a malformed INSERT, and only shared columns are used.
         List<String> columns = sharedColumns(db, table);
@@ -894,7 +883,7 @@ public final class BackupEngine {
      * Pre-merge uniqueness check: detects reference/serial collisions across DIFFERENT IDs
      * before mutating `main`, preventing ghost unallocated payments or broken invoice references.
      */
-    private void checkMergeConflicts(SQLiteDatabase db) throws BackupException {
+    private void checkMergeConflicts(SqlCipherBridge.DbSession db) throws Exception {
         String[][] checks = {
             { "custom_invoices", "reference", "الفواتير المخصصة" },
             { "customer_payments", "reference", "مدفوعات العملاء" },
@@ -990,7 +979,7 @@ public final class BackupEngine {
         return sb.toString();
     }
 
-    private List<String> sharedColumns(SQLiteDatabase db, String table) {
+    private List<String> sharedColumns(SqlCipherBridge.DbSession db, String table) throws Exception {
         List<String> live = columnsOf(db, "main", table);
         List<String> backup = columnsOf(db, "bk", table);
         List<String> shared = new ArrayList<>();
@@ -998,7 +987,7 @@ public final class BackupEngine {
         return shared;
     }
 
-    private List<String> columnsOf(SQLiteDatabase db, String schema, String table) {
+    private List<String> columnsOf(SqlCipherBridge.DbSession db, String schema, String table) throws Exception {
         List<String> cols = new ArrayList<>();
         try (Cursor c = db.rawQuery("PRAGMA " + schema + ".table_info(\"" + table + "\")", null)) {
             int nameIdx = c.getColumnIndex("name");
@@ -1007,7 +996,7 @@ public final class BackupEngine {
         return cols;
     }
 
-    private int mergeKeyValueTable(SQLiteDatabase db, String table, List<String> columns) {
+    private int mergeKeyValueTable(SqlCipherBridge.DbSession db, String table, List<String> columns) throws Exception {
         String valueCol = columns.contains("value") ? "value" : columns.get(1);
         int inserted = 0;
         try (
@@ -1027,7 +1016,7 @@ public final class BackupEngine {
         return inserted;
     }
 
-    private int mergeHigherSequences(SQLiteDatabase db) {
+    private int mergeHigherSequences(SqlCipherBridge.DbSession db) {
         int updated = 0;
         try (
             Cursor c = db.rawQuery(
@@ -1364,15 +1353,50 @@ public final class BackupEngine {
                     out.put("skipReason", "empty-database");
                     return out;
                 }
-                p.edit().putString("last_pre_update_key", updateKey).commit();
                 JSONObject req = new JSONObject();
                 req.put("kind", "pre-update");
                 req.put("skipIfUnchanged", false);
                 req.put("encrypt", true);
-                return createBackup(req);
+                JSONObject backupRes = createBackup(req);
+                if (backupRes.optBoolean("ok", false)) {
+                    p.edit().putString("last_pre_update_key", updateKey).commit();
+                }
+                return backupRes;
             } catch (Exception e) {
                 Log.w(TAG, "preparePreUpdateBackup failed", e);
                 return failure(out, "IO_FAILED", String.valueOf(e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Verifies database integrity via SQLCipher (`PRAGMA integrity_check(1)` + table smoke check)
+     * and automatically salvages/rebuilds a corrupt database before the WebView opens it (or on-demand).
+     */
+    public JSONObject ensureDatabaseHealthy(boolean forceRepair) {
+        synchronized (LOCK) {
+            JSONObject out = new JSONObject();
+            try {
+                if (forceRepair) {
+                    try {
+                        closeAppConnection();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                File rescueDir = new File(context.getFilesDir(), "corrupt-rescue");
+                DatabaseSnapshotter.HealthResult hr = snapshotter.checkAndRepairIfCorrupt(forceRepair, rescueDir);
+                out.put("ok", hr.ok);
+                out.put("status", hr.status == null ? "healthy" : hr.status);
+                out.put("salvagedRecords", hr.salvagedRecords);
+                out.put("salvagedInvoices", hr.salvagedInvoices);
+                out.put("salvagedCustomers", hr.salvagedCustomers);
+                if (hr.errorCode != null) out.put("errorCode", hr.errorCode);
+                if (hr.message != null) out.put("message", hr.message);
+                return out;
+            } catch (Exception e) {
+                Log.e(TAG, "ensureDatabaseHealthy failed", e);
+                return failure(out, "REPAIR_FAILED", String.valueOf(e.getMessage()));
             }
         }
     }

@@ -275,6 +275,17 @@ export async function removeStoredItem(key: string): Promise<void> {
   }
 }
 
+export function isSqliteCorruptionError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+  return (
+    msg.includes("malformed") ||
+    msg.includes("code 11") ||
+    msg.includes("sqlite_corrupt") ||
+    msg.includes("not a database") ||
+    msg.includes("disk image")
+  );
+}
+
 /**
  * Pre-load all entity data into memory cache on startup.
  * This is what enables synchronous reads in useSyncExternalStore.
@@ -330,15 +341,29 @@ async function preloadEntityCaches(): Promise<void> {
       import("./repositories/OfficialLetterRepository"),
     ]);
 
+    let fatalCorruption: unknown = null;
+    const guardPreload = <T>(p: Promise<T[]>): Promise<T[]> =>
+      p.catch((err) => {
+        if (isSqliteCorruptionError(err)) {
+          if (!fatalCorruption) fatalCorruption = err;
+          return [];
+        }
+        return [];
+      });
+
     const [customInvoices, customers, orders, printInvoices, proformaInvoices, officialLetters] =
       await Promise.all([
-        getAllCustomInvoices().catch(() => []),
-        getAllCustomers({ includeArchived: true }).catch(() => []),
-        getAllOrders().catch(() => []),
-        getAllPrintInvoices().catch(() => []),
-        getAllProformaInvoices().catch(() => []),
-        getAllOfficialLetters().catch(() => []),
+        guardPreload(getAllCustomInvoices()),
+        guardPreload(getAllCustomers({ includeArchived: true })),
+        guardPreload(getAllOrders()),
+        guardPreload(getAllPrintInvoices()),
+        guardPreload(getAllProformaInvoices()),
+        guardPreload(getAllOfficialLetters()),
       ]);
+
+    if (fatalCorruption) {
+      throw fatalCorruption;
+    }
 
     parsedCache.set("future_custom_invoices_v2", customInvoices);
     parsedCache.set("future_print_customers_v2", customers);
@@ -410,6 +435,24 @@ async function preloadEntityCaches(): Promise<void> {
   }
 }
 
+async function _openAndPreloadNativeOrWeb(): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    // 1. Initialize DB connection + schema
+    await dbModule.getDb();
+
+    // 2. Run one-time migration from localStorage → SQLite
+    const { runMigration, isMigrationDone } = await import("./database/migration");
+    const migrationAlreadyDone = await isMigrationDone();
+    if (!migrationAlreadyDone) {
+      const report = await runMigration();
+      console.info("[Storage] Migration result:", report.migrated, "errors:", report.errors.length);
+    }
+  }
+
+  // 3. Pre-load all entity data into memory cache
+  await preloadEntityCaches();
+}
+
 /**
  * Initialize SQLite storage engine.
  * Call once at app startup BEFORE mounting React.
@@ -418,21 +461,7 @@ async function preloadEntityCaches(): Promise<void> {
 export async function initSQLiteStorage(): Promise<void> {
   _sqliteInitError = false;
   try {
-    if (Capacitor.isNativePlatform()) {
-      // 1. Initialize DB connection + schema
-      await dbModule.getDb();
-
-      // 2. Run one-time migration from localStorage → SQLite
-      const { runMigration, isMigrationDone } = await import("./database/migration");
-      const migrationAlreadyDone = await isMigrationDone();
-      if (!migrationAlreadyDone) {
-        const report = await runMigration();
-        console.info("[Storage] Migration result:", report.migrated, "errors:", report.errors.length);
-      }
-    }
-
-    // 3. Pre-load all entity data into memory cache
-    await preloadEntityCaches();
+    await _openAndPreloadNativeOrWeb();
 
     if (Capacitor.isNativePlatform()) {
       _sqliteReady = true;
@@ -441,7 +470,24 @@ export async function initSQLiteStorage(): Promise<void> {
     // 4. Signal readiness
     markReady();
   } catch (err) {
-    console.error("[Storage] Init error:", err);
+    if (Capacitor.isNativePlatform() && isSqliteCorruptionError(err)) {
+      console.warn("[Storage] Corruption detected during init, attempting native self-repair & retry:", err);
+      try {
+        await dbModule.closeDb();
+        const { ensureNativeDatabaseHealthy } = await import("./backup/restoreService");
+        await ensureNativeDatabaseHealthy(true, 15_000);
+        memoryCache.clear();
+        parsedCache.clear();
+        await _openAndPreloadNativeOrWeb();
+        _sqliteReady = true;
+        markReady();
+        return;
+      } catch (retryErr) {
+        console.error("[Storage] Init error after self-repair retry:", retryErr);
+      }
+    } else {
+      console.error("[Storage] Init error:", err);
+    }
     _sqliteReady = false;
     _sqliteInitError = true;
     // Still signal storage ready so UI can detect hasSQLiteInitError() and handle fail-closed

@@ -18,7 +18,7 @@
 
 import { Capacitor } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
-import { getDb } from "@/lib/database";
+import * as dbModule from "@/lib/database";
 import { backupBridge, isBackupEngineAvailable } from "./bridge";
 import { getBackupSettingsSnapshot, loadBackupSettings, recordBackupRun } from "./settingsStore";
 import type { BackupKind, BackupRunResult } from "./types";
@@ -26,26 +26,38 @@ import type { BackupKind, BackupRunResult } from "./types";
 const MIN_TRAILING_DEBOUNCE_MS = 5_000;
 const MAX_TRAILING_WAIT_MS = 60_000;
 
+function runWithWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    const lock = (dbModule as Record<string, unknown>)["withDbWriteLock"];
+    if (typeof lock === "function") {
+      return (lock as (cb: () => Promise<T>) => Promise<T>)(fn);
+    }
+  } catch {
+    // Partial test mocks may omit withDbWriteLock
+  }
+  return fn();
+}
+
 /**
- * Flush committed SQLCipher WAL frames into the main .db file before the native
- * Android SQLite snapshotter reads it, avoiding cross-driver WAL visibility gaps.
- * Uses PASSIVE mode for transaction-triggered runs to prevent locking the database,
- * and TRUNCATE mode only for manual explicit user backups.
+ * Flush committed SQLCipher WAL frames passively under the FIFO write lock so
+ * WAL checkpoints never collide with open beginTransaction() write scopes.
  */
 export async function flushWalBeforeBackup(mode: "passive" | "truncate" = "passive"): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   const pragma = mode === "truncate" ? "PRAGMA wal_checkpoint(TRUNCATE);" : "PRAGMA wal_checkpoint(PASSIVE);";
-  try {
-    const db = await getDb();
-    await db.query(pragma);
-  } catch {
+  await runWithWriteLock(async () => {
     try {
-      const db = await getDb();
-      await db.query("PRAGMA wal_checkpoint(PASSIVE);");
+      const db = await dbModule.getDb();
+      await db.query(pragma);
     } catch {
-      // non-fatal: snapshotter still reads WAL when possible
+      try {
+        const db = await dbModule.getDb();
+        await db.query("PRAGMA wal_checkpoint(PASSIVE);");
+      } catch {
+        // non-fatal: native snapshotter uses SQLCipher's open handle or WAL recovery directly
+      }
     }
-  }
+  });
 }
 
 let running = false;
@@ -229,7 +241,7 @@ export async function createManualBackup(): Promise<BackupRunResult> {
   }
   running = true;
   try {
-    await flushWalBeforeBackup("truncate");
+    await flushWalBeforeBackup("passive");
     await loadBackupSettings();
     const settings = getBackupSettingsSnapshot();
     const result = await backupBridge.createBackup("manual", { skipIfUnchanged: false, encrypt: settings.encryptionEnabled });
