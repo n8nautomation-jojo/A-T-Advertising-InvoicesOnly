@@ -3,6 +3,7 @@ import { useInvoices } from "@/lib/invoicesStore";
 import { useCustomInvoices } from "@/lib/billing/store";
 import { useProformaInvoices } from "@/lib/proforma/store";
 import { INVOICE_TYPE_LABELS } from "@/lib/billing/types";
+import { type AppCurrency, sanitizeCurrency } from "@/lib/currency/types";
 import { UnifiedInvoiceRecord, InvoicesStats } from "./types";
 
 /**
@@ -35,7 +36,7 @@ export function useUnifiedInvoices(searchQuery: string = "", activeFilter: strin
         date: inv.meta?.date || inv.createdAt?.slice(0, 10) || "",
         customerName: inv.meta?.customerName || inv.meta?.customerEnName || "عميل بدون اسم",
         total: Number(inv.totalAmount) || 0,
-        currency: (inv.currency || inv.meta?.currency || "SDG") as any,
+        currency: sanitizeCurrency(inv.currency || inv.meta?.currency, "SDG"),
         type: "proforma",
         typeLabel: "فاتورة مبدئية Proforma",
         badgeColor: "border-[#C5A059]/40 text-[#C5A059] bg-[#C5A059]/10",
@@ -67,7 +68,7 @@ export function useUnifiedInvoices(searchQuery: string = "", activeFilter: strin
         date: inv.meta?.date || inv.createdAt?.slice(0, 10) || "",
         customerName: inv.meta?.partyName || inv.meta?.partyEnName || "عميل غير محدد",
         total: Number(inv.totalAmount) || 0,
-        currency: (inv.currency || inv.meta?.currency || "SDG") as any,
+        currency: sanitizeCurrency(inv.currency || inv.meta?.currency, "SDG"),
         type,
         typeLabel: INVOICE_TYPE_LABELS[type] || "فاتورة",
         badgeColor,
@@ -85,7 +86,7 @@ export function useUnifiedInvoices(searchQuery: string = "", activeFilter: strin
         date: inv.date || inv.createdAt?.slice(0, 10) || "",
         customerName: inv.customerName || "عميل حاسبة",
         total: Number(inv.total) || 0,
-        currency: (inv.currency || "SDG") as any,
+        currency: sanitizeCurrency(inv.currency, "SDG"),
         type: "calculator",
         typeLabel: "إيصال حاسبة A5",
         badgeColor: "border-primary/30 text-primary bg-primary/10",
@@ -134,12 +135,18 @@ export function useUnifiedInvoices(searchQuery: string = "", activeFilter: strin
   // 3. المؤشرات والإحصائيات السريعة المحدثة
   const stats = useMemo<InvoicesStats>(() => {
     const totalCount = allRecords.length;
-    const totalAmount = allRecords.reduce((sum, r) => sum + r.total, 0);
+    const totalsByCurrency: Partial<Record<AppCurrency, number>> = {};
+    for (const r of allRecords) {
+      const cur = sanitizeCurrency(r.currency, "SDG");
+      totalsByCurrency[cur] =
+        Math.round(((totalsByCurrency[cur] || 0) + (Number(r.total) || 0)) * 100) / 100;
+    }
+    const totalAmount = totalsByCurrency.SDG ?? 0;
     const customCount = (customInvoices || []).length;
     const calcCount = (calcInvoices || []).length;
     const proformaCount = (proformaInvoices || []).length;
 
-    return { totalCount, totalAmount, customCount, calcCount, proformaCount };
+    return { totalCount, totalAmount, totalsByCurrency, customCount, calcCount, proformaCount };
   }, [allRecords, customInvoices, calcInvoices, proformaInvoices]);
 
   return {

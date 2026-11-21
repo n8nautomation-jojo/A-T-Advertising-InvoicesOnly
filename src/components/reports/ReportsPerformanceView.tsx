@@ -3,7 +3,8 @@ import { TrendingUp, DollarSign } from "lucide-react";
 import type { FinancialPerformanceReport } from "@/lib/repositories/ReportsRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { cn } from "@/lib/utils";
-import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { DEFAULT_CURRENCY, type AppCurrency } from "@/lib/currency/types";
 
 interface Props {
   performance: FinancialPerformanceReport | null;
@@ -11,7 +12,7 @@ interface Props {
 }
 
 export function ReportsPerformanceView({ performance, currency = DEFAULT_CURRENCY }: Props) {
-  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const curLabel = getCurrencyShortLabel(currency);
   const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ${curLabel}`;
 
   const rows = [

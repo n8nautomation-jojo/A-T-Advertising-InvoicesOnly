@@ -9,6 +9,7 @@ import type {
   ReceivablesSummary,
 } from "@/lib/repositories/LedgerRepository";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { Card, Row } from "./FinancePrimitives";
 
 interface FinanceOverviewTabProps {
@@ -26,7 +27,7 @@ export function FinanceOverviewTab({
   receivables,
   payables,
   openInvoices,
-  currencyLabel = "ج.س",
+  currencyLabel = getCurrencyShortLabel("SDG"),
   onOpenReceiptDialog,
   onOpenSupplierDialog,
 }: FinanceOverviewTabProps) {
@@ -97,53 +98,58 @@ export function FinanceOverviewTab({
           </p>
         ) : (
           <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-card overflow-hidden">
-            {openInvoices.slice(0, 12).map((inv) => (
-              <div
-                key={inv.id}
-                className="flex items-center justify-between gap-2.5 p-3 text-right hover:bg-muted/20 transition-colors"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-black text-foreground truncate">
-                    <span className="font-mono text-primary" dir="ltr">
-                      {inv.reference || "—"}
-                    </span>
-                    <span className="mx-1.5 text-muted-foreground">·</span>
-                    {inv.customerId ? (
-                      <Link
-                        to="/customers"
-                        search={{ id: inv.customerId }}
-                        className="hover:text-primary hover:underline transition-colors"
-                      >
-                        {inv.customerName || "عميل غير محدد"}
-                      </Link>
-                    ) : (
-                      <span>{inv.customerName || "عميل غير محدد"}</span>
-                    )}
-                  </p>
-                  <p className="text-[10.5px] text-muted-foreground mt-0.5">
-                    {inv.date} · مدفوع {formatNumber(inv.settlement.paid)} من {formatNumber(inv.settlement.total)}{" "}
-                    {inv.currency && inv.currency !== "SDG" ? inv.currency : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="text-left">
-                    <span className="font-mono text-xs font-black text-amber-600 dark:text-amber-400 tabular-nums">
-                      {formatNumber(inv.settlement.outstanding)}
-                    </span>
-                    <p className="text-[9.5px] text-muted-foreground">متبقي</p>
+            {openInvoices.slice(0, 12).map((inv) => {
+              const invCurLabel = inv.currency
+                ? getCurrencyShortLabel(inv.currency)
+                : currencyLabel;
+              return (
+                <div
+                  key={inv.id}
+                  className="flex items-center justify-between gap-2.5 p-3 text-right hover:bg-muted/20 transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-black text-foreground truncate">
+                      <span className="font-mono text-primary" dir="ltr">
+                        {inv.reference || "—"}
+                      </span>
+                      <span className="mx-1.5 text-muted-foreground">·</span>
+                      {inv.customerId ? (
+                        <Link
+                          to="/customers"
+                          search={{ id: inv.customerId }}
+                          className="hover:text-primary hover:underline transition-colors"
+                        >
+                          {inv.customerName || "عميل غير محدد"}
+                        </Link>
+                      ) : (
+                        <span>{inv.customerName || "عميل غير محدد"}</span>
+                      )}
+                    </p>
+                    <p className="text-[10.5px] text-muted-foreground mt-0.5">
+                      {inv.date} · مدفوع {formatNumber(inv.settlement.paid)} من {formatNumber(inv.settlement.total)}{" "}
+                      {invCurLabel}
+                    </p>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => onOpenReceiptDialog(inv.id)}
-                    className="h-8 rounded-lg px-3 text-[11px] font-black gap-1"
-                  >
-                    <Receipt className="h-3 w-3" />
-                    تحصيل
-                  </Button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-left">
+                      <span className="font-mono text-xs font-black text-amber-600 dark:text-amber-400 tabular-nums">
+                        {formatNumber(inv.settlement.outstanding)} {invCurLabel}
+                      </span>
+                      <p className="text-[9.5px] text-muted-foreground">متبقي</p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => onOpenReceiptDialog(inv.id)}
+                      className="h-8 rounded-lg px-3 text-[11px] font-black gap-1"
+                    >
+                      <Receipt className="h-3 w-3" />
+                      تحصيل
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

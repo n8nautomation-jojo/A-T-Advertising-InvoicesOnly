@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Calendar, Layers, Plus, Receipt, RefreshCw, Wallet } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { PageShell } from "@/components/layout/PageShell";
@@ -13,6 +13,7 @@ import {
 } from "@/lib/repositories/ExpenseRepository";
 import { SETTLEMENT_STATUS_LABELS, SETTLEMENT_STATUS_TONES } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { ExpenseDialog } from "@/components/finance/ExpenseDialog";
 import { CurrencySelector } from "@/components/currency/CurrencySelector";
 import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
@@ -27,14 +28,37 @@ export function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [settleTarget, setSettleTarget] = useState<ExpenseWithSettlement | null>(null);
+  const didAutoSelectCurrencyRef = useRef(false);
 
-  const currencyLabel =
-    currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const currencyLabel = getCurrencyShortLabel(currency);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await getExpensesWithSettlement(undefined, currency));
+      const currentRows = await getExpensesWithSettlement(undefined, currency);
+      if (!didAutoSelectCurrencyRef.current) {
+        if (currentRows.length > 0) {
+          didAutoSelectCurrencyRef.current = true;
+        } else if (currency === "SDG") {
+          const otherCurrencies = (Object.keys(SUPPORTED_CURRENCIES) as AppCurrency[]).filter(
+            (c) => c !== "SDG"
+          );
+          const otherResults = await Promise.all(
+            otherCurrencies.map(async (cur) => ({
+              cur,
+              items: await getExpensesWithSettlement(undefined, cur),
+            }))
+          );
+          const active = otherResults.find(({ items }) => items.length > 0);
+          if (active) {
+            didAutoSelectCurrencyRef.current = true;
+            setRows(active.items);
+            setCurrency(active.cur);
+            return;
+          }
+        }
+      }
+      setRows(currentRows);
     } catch (err) {
       console.error("[ExpensesPage] load failed:", err);
     } finally {
@@ -103,7 +127,10 @@ export function ExpensesPage() {
                 label="العملة:"
                 dropdownTitle="اختر عملة العرض"
                 value={currency}
-                onChange={setCurrency}
+                onChange={(c) => {
+                  didAutoSelectCurrencyRef.current = true;
+                  setCurrency(c);
+                }}
               />
               <Button
                 type="button"
@@ -174,10 +201,7 @@ export function ExpensesPage() {
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                           {list.map((row) => {
-                            const rowCurLabel =
-                              row.currency === "SDG"
-                                ? "ج.س"
-                                : SUPPORTED_CURRENCIES[row.currency]?.symbol ?? row.currency;
+                            const rowCurLabel = getCurrencyShortLabel(row.currency);
                             return (
                               <div
                                 key={row.id}
@@ -225,7 +249,7 @@ export function ExpensesPage() {
                                   <div className="flex items-center justify-between gap-2 border-t border-border/50 pt-2">
                                     <div className="text-[10.5px] font-bold text-amber-600 dark:text-amber-400">
                                       {row.settlement.paid > 0
-                                        ? `مسدَّد ${formatNumber(row.settlement.paid)} · متبقي ${formatNumber(row.settlement.outstanding)}`
+                                        ? `مسدَّد ${formatNumber(row.settlement.paid)} ${rowCurLabel} · متبقي ${formatNumber(row.settlement.outstanding)} ${rowCurLabel}`
                                         : "بانتظار السداد النقدي"}
                                     </div>
                                     {row.settlement.outstanding > 0 && (
@@ -269,7 +293,7 @@ export function ExpensesPage() {
 function Metric({
   label,
   value,
-  currencyLabel = "ج.س",
+  currencyLabel = getCurrencyShortLabel("SDG"),
   tone,
   className,
 }: {

@@ -456,7 +456,7 @@ export async function getCustomerStatement(
   );
   const cRow = customerRes.values?.[0] || {};
   const customerName = String(cRow.name ?? "عميل");
-  const targetCurrency = filterCurrency || cRow.opening_balance_currency || "SDG";
+  const targetCurrency = sanitizeCurrency(filterCurrency || cRow.opening_balance_currency, "SDG");
 
   const invoiceClause = rangeClause(range, "i.date");
   const invoicesRes = await db.query(
@@ -642,7 +642,7 @@ export async function getSupplierStatement(
   const supplierRes = await db.query("SELECT name FROM suppliers WHERE id = ? LIMIT 1", [supplierId]);
   const supplierName = String(supplierRes.values?.[0]?.name ?? "مورد");
 
-  const targetCurrency = filterCurrency ? sanitizeCurrency(filterCurrency, "SDG") : undefined;
+  const targetCurrency: AppCurrency = sanitizeCurrency(filterCurrency, "SDG");
   const curPlain = currencyClause(targetCurrency, "currency");
   const curPay = currencyClause(targetCurrency, "p.currency");
 
@@ -691,7 +691,7 @@ export async function getSupplierStatement(
           label: "رصيد مرحل ما قبل الفترة",
           debit: broughtForward < 0 ? round2(Math.abs(broughtForward)) : 0,
           credit: broughtForward > 0 ? broughtForward : 0,
-          currency: targetCurrency ?? "SDG",
+          currency: targetCurrency,
         },
       });
     }
@@ -746,7 +746,7 @@ export async function getSupplierStatement(
   return {
     supplierId,
     supplierName,
-    currency: targetCurrency ?? "SDG",
+    currency: targetCurrency,
     lines,
     totalPurchased: round2(totalPurchased),
     totalPaid: round2(totalPaid),

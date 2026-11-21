@@ -50,6 +50,7 @@ interface Props {
   newCustomerAddress?: string;
   setNewCustomerAddress?: (v: string) => void;
   isCustomerLocked?: boolean;
+  isCurrencyLocked?: boolean;
   onOpenCustomerProfile?: (customerId: string) => void;
   supplierId?: string | null;
   setSupplierId?: (id: string | null) => void;
@@ -84,6 +85,7 @@ export function CustomInvoiceMetaSection({
   newCustomerAddress = "",
   setNewCustomerAddress,
   isCustomerLocked = false,
+  isCurrencyLocked = false,
   onOpenCustomerProfile,
   supplierId,
   setSupplierId,
@@ -196,11 +198,24 @@ export function CustomInvoiceMetaSection({
             ))}
           </div>
 
-          <CurrencySelector
-            value={currency}
-            onChange={setCurrency}
-            locale={language === "en" ? "en" : "ar"}
-          />
+          <div className="flex flex-col items-end gap-0.5">
+            <CurrencySelector
+              value={currency}
+              onChange={setCurrency}
+              locale={language === "en" ? "en" : "ar"}
+              disabled={isCurrencyLocked}
+              dropdownTitle={
+                isCurrencyLocked
+                  ? "العملة مقفلة لوجود مدفوعات مسجلة على الفاتورة"
+                  : undefined
+              }
+            />
+            {isCurrencyLocked && (
+              <span className="text-[9.5px] font-bold text-amber-600 dark:text-amber-400">
+                العملة مقفلة لوجود مدفوعات مسجلة
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

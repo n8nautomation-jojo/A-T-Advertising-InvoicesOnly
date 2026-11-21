@@ -13,6 +13,8 @@ import {
   calculateProformaTotals,
 } from "@/lib/proforma/store";
 import type { ProformaInvoice, ProformaLine, ProformaMeta } from "@/lib/proforma/types";
+import { detectInvoiceLanguage } from "@/lib/billing/languageHelper";
+import { sanitizeCurrency } from "@/lib/currency/types";
 import { getLocalIsoDate } from "@/lib/dateUtils";
 import { findOrCreateCustomerByName } from "@/lib/customersStore";
 import { router } from "@/router";
@@ -74,7 +76,7 @@ export function ProformaDialog({
         setCurrentId(existingInvoice.id);
         setMeta({
           ...existingInvoice.meta,
-          currency: existingInvoice.currency || existingInvoice.meta.currency || "SDG",
+          currency: sanitizeCurrency(existingInvoice.currency || existingInvoice.meta.currency, "SDG"),
         });
         setLines(existingInvoice.lines);
         setSaved(true);
@@ -101,12 +103,13 @@ export function ProformaDialog({
   }, [open, existingInvoice, initialLines]);
 
   const activeInvoice: ProformaInvoice = useMemo(() => {
-    const currency = meta.currency || "SDG";
-    const isRtl = (meta.language || "ar") !== "en";
+    const currency = sanitizeCurrency(meta.currency, "SDG");
+    const isRtl =
+      detectInvoiceLanguage(meta.language, meta.customerName, meta.customerEnName, lines) === "ar";
     const totals = calculateProformaTotals(lines, currency, isRtl);
     return {
       id: currentId || existingInvoice?.id || draftIdRef.current || `proforma-${meta.serial}`,
-      meta,
+      meta: { ...meta, currency },
       lines,
       ...totals,
       currency,

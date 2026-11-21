@@ -128,10 +128,13 @@ export async function getAccountBalance(accountId: string): Promise<AccountBalan
   const db = await getDb();
   const res = await db.query(
     `SELECT
-       COALESCE(SUM(CASE WHEN kind IN ('receipt', 'transfer_in') THEN amount ELSE 0 END), 0) AS inflow,
-       COALESCE(SUM(CASE WHEN kind IN ('payment', 'transfer_out') THEN amount ELSE 0 END), 0) AS outflow
-     FROM financial_transactions
-     WHERE account_id = ? AND (reversed_by IS NULL OR reversed_by = '')`,
+       COALESCE(SUM(CASE WHEN t.kind IN ('receipt', 'transfer_in') THEN t.amount ELSE 0 END), 0) AS inflow,
+       COALESCE(SUM(CASE WHEN t.kind IN ('payment', 'transfer_out') THEN t.amount ELSE 0 END), 0) AS outflow
+     FROM financial_transactions t
+     JOIN financial_accounts a ON a.id = t.account_id
+     WHERE t.account_id = ?
+       AND (t.reversed_by IS NULL OR t.reversed_by = '')
+       AND COALESCE(t.currency, a.currency, 'SDG') = COALESCE(a.currency, 'SDG')`,
     [accountId]
   );
   const row = res.values?.[0];
@@ -149,12 +152,14 @@ export async function getAccountBalances(): Promise<AccountBalanceReport[]> {
 
   const aggRes = await db.query(
     `SELECT
-       account_id,
-       COALESCE(SUM(CASE WHEN kind IN ('receipt', 'transfer_in') THEN amount ELSE 0 END), 0) AS inflow,
-       COALESCE(SUM(CASE WHEN kind IN ('payment', 'transfer_out') THEN amount ELSE 0 END), 0) AS outflow
-     FROM financial_transactions
-     WHERE reversed_by IS NULL OR reversed_by = ''
-     GROUP BY account_id`
+       t.account_id,
+       COALESCE(SUM(CASE WHEN t.kind IN ('receipt', 'transfer_in') THEN t.amount ELSE 0 END), 0) AS inflow,
+       COALESCE(SUM(CASE WHEN t.kind IN ('payment', 'transfer_out') THEN t.amount ELSE 0 END), 0) AS outflow
+     FROM financial_transactions t
+     JOIN financial_accounts a ON a.id = t.account_id
+     WHERE (t.reversed_by IS NULL OR t.reversed_by = '')
+       AND COALESCE(t.currency, a.currency, 'SDG') = COALESCE(a.currency, 'SDG')
+     GROUP BY t.account_id`
   );
 
   const aggByAccount = new Map<string, { inflow: number; outflow: number }>();

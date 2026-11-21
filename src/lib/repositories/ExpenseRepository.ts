@@ -246,9 +246,25 @@ export async function payExpense(
     if (!expense) throw new Error("المصروف غير موجود");
     if (expense.cancelledAt) throw new Error("لا يمكن سداد مصروف ملغى.");
 
-    const currency = sanitizeCurrency(input.currency ?? expense.currency, expense.currency);
-    if (currency !== expense.currency) {
-      throw new Error(`عملة السداد (${currency}) لا تطابق عملة المصروف (${expense.currency}).`);
+    const expenseCurrency = sanitizeCurrency(expense.currency, "SDG");
+    const currency = sanitizeCurrency(input.currency ?? expenseCurrency, expenseCurrency);
+    if (currency !== expenseCurrency) {
+      throw new Error(`عملة السداد (${currency}) لا تطابق عملة المصروف (${expenseCurrency}).`);
+    }
+
+    const accountRes = await db.query(
+      "SELECT id, COALESCE(currency, 'SDG') AS currency FROM financial_accounts WHERE id = ? LIMIT 1",
+      [input.accountId]
+    );
+    const accountRow = accountRes.values?.[0];
+    if (!accountRow) {
+      throw new Error("الحساب المالي المحدد غير موجود.");
+    }
+    const accountCurrency = sanitizeCurrency(accountRow.currency, "SDG");
+    if (accountCurrency !== expenseCurrency) {
+      throw new Error(
+        `عملة الحساب المالي (${accountCurrency}) لا تطابق عملة المصروف (${expenseCurrency}). يرجى اختيار حساب بنفس العملة.`
+      );
     }
 
     const paidRes = await db.query(

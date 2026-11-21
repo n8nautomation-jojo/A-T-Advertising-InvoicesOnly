@@ -43,8 +43,9 @@ import {
 } from "@/lib/domain/finance";
 import { notifyFinanceUpdated, refreshSettlements } from "@/lib/financeStore";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { CurrencySelector } from "@/components/currency/CurrencySelector";
-import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
+import { DEFAULT_CURRENCY, type AppCurrency } from "@/lib/currency/types";
 import { ReceiptDialog } from "./ReceiptDialog";
 import { SupplierPaymentDialog } from "./SupplierPaymentDialog";
 import { TransferDialog } from "./TransferDialog";
@@ -93,8 +94,7 @@ export function FinancePage() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
 
-  const currencyLabel =
-    currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const currencyLabel = getCurrencyShortLabel(currency);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -492,10 +492,19 @@ export function FinancePage() {
           if (!v) setReceiptInvoiceId(null);
         }}
         initialInvoiceId={receiptInvoiceId}
+        defaultCurrency={currency}
       />
-      <SupplierPaymentDialog open={supplierOpen} onOpenChange={setSupplierOpen} />
+      <SupplierPaymentDialog
+        open={supplierOpen}
+        onOpenChange={setSupplierOpen}
+        defaultCurrency={currency}
+      />
       <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} />
-      <ExpenseDialog open={expenseOpen} onOpenChange={setExpenseOpen} />
+      <ExpenseDialog
+        open={expenseOpen}
+        onOpenChange={setExpenseOpen}
+        defaultCurrency={currency}
+      />
 
       <CancelPaymentAlertDialog
         cancelTarget={cancelTarget}

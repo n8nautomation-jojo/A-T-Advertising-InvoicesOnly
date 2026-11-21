@@ -30,6 +30,9 @@ import { notifyFinanceUpdated } from "@/lib/financeStore";
 import { getLocalIsoDate } from "@/lib/dateUtils";
 import { PAYMENT_METHOD_LABELS, type FinancialAccount, type PaymentMethod } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { DEFAULT_CURRENCY, sanitizeCurrency, type AppCurrency } from "@/lib/currency/types";
+import { CurrencySelector } from "@/components/currency/CurrencySelector";
 import {
   ReceiptCustomerSelectorSection,
   ReceiptInvoiceAllocationsSection,
@@ -44,6 +47,8 @@ interface Props {
   initialInvoiceId?: string | null;
   /** عميل محدد مسبقاً عند الفتح من بطاقة عميل أو ذمم */
   initialCustomerId?: string | null;
+  /** العملة الافتراضية للتحصيل (تُقفل تلقائياً على عملة الفاتورة عند تحديد فاتورة) */
+  defaultCurrency?: AppCurrency;
   onRecorded?: () => void;
 }
 
@@ -68,6 +73,7 @@ export function ReceiptDialog({
   onOpenChange,
   initialInvoiceId,
   initialCustomerId,
+  defaultCurrency,
   onRecorded,
 }: Props) {
   const customers = useCustomers();
@@ -79,6 +85,9 @@ export function ReceiptDialog({
   const [customerSummary, setCustomerSummary] = useState<CustomerAccount | null>(null);
   const [loadingInit, setLoadingInit] = useState(false);
 
+  const [currency, setCurrency] = useState<AppCurrency>(() =>
+    sanitizeCurrency(defaultCurrency, DEFAULT_CURRENCY)
+  );
   const [customerId, setCustomerId] = useState("");
   const [amount, setAmount] = useState("");
   const [paidAt, setPaidAt] = useState(() => getLocalIsoDate());
@@ -94,6 +103,15 @@ export function ReceiptDialog({
   const [quickCustomerName, setQuickCustomerName] = useState("");
   const [quickCustomerPhone, setQuickCustomerPhone] = useState("");
   const [creatingCustomer, setCreatingCustomer] = useState(false);
+
+  const isCurrencyLocked = Boolean(initialInvoiceId);
+  const currencyLabel = getCurrencyShortLabel(currency);
+
+  const selectableAccounts = useMemo(
+    () => accounts.filter((a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === currency),
+    [accounts, currency]
+  );
+  const noMatchingAccount = !loadingInit && selectableAccounts.length === 0;
 
   useEffect(() => {
     if (!open) {
@@ -122,12 +140,21 @@ export function ReceiptDialog({
 
         setAccounts(accountList);
         setOpenInvoices(invoices);
-        setAccountId((current) =>
-          current && accountList.some((a) => a.id === current) ? current : accountList[0]?.id ?? ""
-        );
 
+        const fallbackCurrency = sanitizeCurrency(defaultCurrency, DEFAULT_CURRENCY);
         if (initialInvoiceId) {
           const invoice = invoices.find((inv) => inv.id === initialInvoiceId);
+          const resolvedCurrency = invoice
+            ? sanitizeCurrency(invoice.currency, fallbackCurrency)
+            : fallbackCurrency;
+          const matching = accountList.filter(
+            (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === resolvedCurrency
+          );
+          setCurrency(resolvedCurrency);
+          setAccountId((current) =>
+            current && matching.some((a) => a.id === current) ? current : matching[0]?.id ?? ""
+          );
+
           const matchedCustomerId = invoice
             ? resolveCustomerIdForInvoice(invoice, customersRef.current)
             : initialCustomerId ?? "";
@@ -139,6 +166,13 @@ export function ReceiptDialog({
             setQuickCustomerName(invoice.customerName.trim());
           }
         } else {
+          const matching = accountList.filter(
+            (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === fallbackCurrency
+          );
+          setCurrency(fallbackCurrency);
+          setAccountId((current) =>
+            current && matching.some((a) => a.id === current) ? current : matching[0]?.id ?? ""
+          );
           setCustomerId(initialCustomerId ?? "");
           setRows([]);
           setAmount("");
@@ -156,7 +190,16 @@ export function ReceiptDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, initialInvoiceId, initialCustomerId]);
+  }, [open, initialInvoiceId, initialCustomerId, defaultCurrency]);
+
+  useEffect(() => {
+    if (!open || loadingInit) return;
+    setAccountId((current) =>
+      current && selectableAccounts.some((a) => a.id === current)
+        ? current
+        : selectableAccounts[0]?.id ?? ""
+    );
+  }, [open, loadingInit, selectableAccounts]);
 
   useEffect(() => {
     if (!open || !customerId) {
@@ -164,7 +207,7 @@ export function ReceiptDialog({
       return;
     }
     let cancelled = false;
-    void getCustomerAccount(customerId)
+    void getCustomerAccount(customerId, currency)
       .then((summary) => {
         if (!cancelled) setCustomerSummary(summary);
       })
@@ -174,7 +217,7 @@ export function ReceiptDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, customerId]);
+  }, [open, customerId, currency]);
 
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.id === customerId) ?? null,
@@ -186,10 +229,11 @@ export function ReceiptDialog({
     const targetName = selectedCustomer?.name.trim().toLowerCase() ?? "";
     return openInvoices.filter(
       (inv) =>
-        inv.customerId === customerId ||
-        (Boolean(targetName) && inv.customerName.trim().toLowerCase() === targetName)
+        sanitizeCurrency(inv.currency, DEFAULT_CURRENCY) === currency &&
+        (inv.customerId === customerId ||
+          (Boolean(targetName) && inv.customerName.trim().toLowerCase() === targetName))
     );
-  }, [openInvoices, customerId, selectedCustomer]);
+  }, [openInvoices, customerId, selectedCustomer, currency]);
 
   const allocatedTotal = useMemo(
     () => rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0),
@@ -203,6 +247,14 @@ export function ReceiptDialog({
     return customerOpenInvoices.filter((inv) => !usedIds.has(inv.id));
   }, [customerOpenInvoices, rows]);
 
+  const handleCurrencyChange = (next: AppCurrency) => {
+    if (isCurrencyLocked) return;
+    const safe = sanitizeCurrency(next, DEFAULT_CURRENCY);
+    setCurrency(safe);
+    setRows([]);
+    setDuplicateWarning(null);
+  };
+
   const handleSelectCustomer = (nextId: string) => {
     setCustomerId(nextId);
     setDuplicateWarning(null);
@@ -215,7 +267,7 @@ export function ReceiptDialog({
       setRows((current) =>
         current.filter((row) => {
           const inv = openInvoices.find((i) => i.id === row.invoiceId);
-          if (!inv) return false;
+          if (!inv || sanitizeCurrency(inv.currency, DEFAULT_CURRENCY) !== currency) return false;
           return (
             inv.customerId === nextId ||
             (Boolean(nextName) && inv.customerName.trim().toLowerCase() === nextName)
@@ -334,30 +386,31 @@ export function ReceiptDialog({
       return;
     }
 
+    const selectedAccount = selectableAccounts.find((a) => a.id === accountId);
+    if (!selectedAccount) {
+      toast.error(`لا يوجد حساب مالي مختار بعملة ${currency} (${currencyLabel})`);
+      return;
+    }
+
     const activeAllocations = rows
       .filter((row) => Number(row.amount) > 0)
       .map((row) => ({ invoiceId: row.invoiceId, amount: Number(row.amount) }));
-    const firstAllocatedInv =
-      activeAllocations.length > 0
-        ? customerOpenInvoices.find((inv) => inv.id === activeAllocations[0].invoiceId)
-        : undefined;
-    const selectedAccount = accounts.find((a) => a.id === accountId);
 
     setBusy(true);
     try {
       const { payment } = await recordCustomerReceipt({
         customerId,
         amount: paymentAmount,
-        currency: firstAllocatedInv?.currency ?? selectedAccount?.currency,
+        currency,
         paidAt,
         method,
-        accountId,
+        accountId: selectedAccount.id,
         notes: notes.trim() || undefined,
         allocations: activeAllocations,
         confirmDuplicate,
       });
       setDuplicateWarning(null);
-      const curLabel = !payment.currency || payment.currency === "SDG" ? "ج.س" : payment.currency;
+      const curLabel = getCurrencyShortLabel(payment.currency);
       toast.success(`تم تسجيل التحصيل ${payment.reference} بمبلغ ${formatNumber(payment.amount)} ${curLabel}`);
       await notifyFinanceUpdated();
       onRecorded?.();
@@ -391,6 +444,22 @@ export function ReceiptDialog({
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2">
+              <span className="text-[11px] font-black text-foreground">
+                عملة التحصيل{" "}
+                {isCurrencyLocked && (
+                  <span className="text-[10px] font-bold text-muted-foreground">(مطابقة للفاتورة)</span>
+                )}
+              </span>
+              <CurrencySelector
+                label=""
+                dropdownTitle="اختر عملة التحصيل"
+                value={currency}
+                onChange={handleCurrencyChange}
+                disabled={isCurrencyLocked}
+              />
+            </div>
+
             <ReceiptCustomerSelectorSection
               customers={customers}
               customerId={customerId}
@@ -405,10 +474,11 @@ export function ReceiptDialog({
               creatingCustomer={creatingCustomer}
               onQuickAddCustomer={() => void handleQuickAddCustomer()}
               customerSummary={customerSummary}
+              currencyLabel={currencyLabel}
             />
 
             <div className="grid grid-cols-2 gap-2">
-              <Field label="المبلغ" required>
+              <Field label={`المبلغ (${currencyLabel})`} required>
                 <Input
                   inputMode="decimal"
                   value={amount}
@@ -455,21 +525,34 @@ export function ReceiptDialog({
                 </Select>
               </Field>
               <Field label="الحساب المستلم" required>
-                <Select value={accountId || "__none__"} onValueChange={(v) => setAccountId(v === "__none__" ? "" : v)}>
+                <Select
+                  value={accountId || "__none__"}
+                  onValueChange={(v) => setAccountId(v === "__none__" ? "" : v)}
+                  disabled={noMatchingAccount}
+                >
                   <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
                     <SelectValue placeholder="اختر الحساب" />
                   </SelectTrigger>
                   <SelectContent dir="rtl">
                     <SelectItem value="__none__">— اختر الحساب —</SelectItem>
-                    {accounts.map((account) => (
+                    {selectableAccounts.map((account) => (
                       <SelectItem key={account.id} value={account.id}>
-                        {account.name}
+                        {account.name} ({getCurrencyShortLabel(account.currency)})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
             </div>
+
+            {noMatchingAccount && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  لا يوجد حساب مالي بعملة {currency} ({currencyLabel}). يرجى إضافة حساب مالي بهذه العملة من صفحة المالية أولاً.
+                </span>
+              </div>
+            )}
 
             <ReceiptInvoiceAllocationsSection
               customerId={customerId}
@@ -484,6 +567,7 @@ export function ReceiptDialog({
               onPickInvoiceToPay={handlePickInvoiceToPay}
               onPayFullInvoice={handlePayFullInvoice}
               onAutoAllocate={autoAllocateCustomerInvoices}
+              currencyLabel={currencyLabel}
             />
 
             <Field label="ملاحظات (اختياري)">
@@ -531,7 +615,12 @@ export function ReceiptDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="flex-1 h-10 rounded-xl text-xs font-bold">
             إلغاء
           </Button>
-          <Button type="button" onClick={() => void handleSave(false)} disabled={busy || loadingInit} className="flex-1 h-10 rounded-xl text-xs font-bold">
+          <Button
+            type="button"
+            onClick={() => void handleSave(false)}
+            disabled={busy || loadingInit || noMatchingAccount}
+            className="flex-1 h-10 rounded-xl text-xs font-bold"
+          >
             {busy && <Loader2 className="h-4 w-4 animate-spin me-1" />}
             تسجيل التحصيل
           </Button>

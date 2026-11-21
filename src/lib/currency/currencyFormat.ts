@@ -54,3 +54,12 @@ export function getCurrencyDisplayName(
   return locale === "en" ? conf.nameEn : conf.nameAr;
 }
 
+/**
+ * الرمز المختصر الموحّد للعملة في واجهات التطبيق:
+ * SDG -> "ج.س" | USD -> "$" | SAR -> "ر.س" | EGP -> "ج.م"
+ */
+export function getCurrencyShortLabel(currency?: string | null): string {
+  const safeCurrency = sanitizeCurrency(currency, DEFAULT_CURRENCY);
+  return SUPPORTED_CURRENCIES[safeCurrency]?.symbol ?? safeCurrency;
+}
+

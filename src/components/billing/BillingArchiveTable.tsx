@@ -48,6 +48,7 @@ import { toast } from "sonner";
 import { useUnifiedInvoices } from "@/components/invoices/useUnifiedInvoices";
 import { settlementFor, useSettlementVersion } from "@/lib/financeStore";
 import type { UnifiedInvoiceRecord } from "@/components/invoices/types";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 
 interface Props {
   invoices?: CustomInvoice[];
@@ -393,7 +394,9 @@ export function BillingArchiveTable({
                             settlement.outstanding > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
                           }`}
                         >
-                          {settlement.outstanding > 0 ? `متبقي ${formatAccountingNumber(settlement.outstanding)}` : "مسدَّدة"}
+                          {settlement.outstanding > 0
+                            ? `متبقي ${formatAccountingNumber(settlement.outstanding)} ${getCurrencyShortLabel(rec.currency)}`
+                            : "مسدَّدة"}
                         </span>
                       )}
                     </td>

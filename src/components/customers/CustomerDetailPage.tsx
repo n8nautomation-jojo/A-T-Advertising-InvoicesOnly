@@ -38,6 +38,8 @@ import {
 import { printCustomerStatement } from "@/lib/customerStatementExport";
 import { getCustomInvoiceById } from "@/lib/repositories/CustomInvoiceRepository";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { SUPPORTED_CURRENCIES, sanitizeCurrency } from "@/lib/currency/types";
 import { playTapSound } from "@/lib/soundEffects";
 import { CustomerDialog } from "./CustomerDialog";
 import {
@@ -84,7 +86,15 @@ export function CustomerDetailPage({
   const [financialProfile, setFinancialProfile] = useState<CustomerFinancialProfile | null>(null);
   const [invoices, setInvoices] = useState<CustomerInvoiceItemRow[]>([]);
   const [statement, setStatement] = useState<CustomerStatement | null>(null);
-  const [selectedCurrency, setSelectedCurrency] = useState<string>("SDG");
+  const [statementsByCurrency, setStatementsByCurrency] = useState<Record<string, CustomerStatement>>({});
+  const [statementViewAllCurrencies, setStatementViewAllCurrencies] = useState(true);
+  const [selectedCurrency, setSelectedCurrency] = useState<string>(() =>
+    sanitizeCurrency(customer.openingBalanceCurrency, "SDG")
+  );
+  const selectedCurrencyRef = useRef<string>(
+    sanitizeCurrency(customer.openingBalanceCurrency, "SDG")
+  );
+  const hasLoadedProfileForCustomerRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false);
@@ -139,17 +149,39 @@ export function CustomerDetailPage({
       setFinancialProfile(profile);
       setInvoices(invs);
 
-      const defaultCur = profile.primaryCurrency || "SDG";
-      setSelectedCurrency(defaultCur);
+      const isInitialForCustomer = hasLoadedProfileForCustomerRef.current !== customer.id;
+      hasLoadedProfileForCustomerRef.current = customer.id;
+
+      const primaryCur = sanitizeCurrency(profile.primaryCurrency, "SDG");
+      const prevCur = selectedCurrencyRef.current;
+      const availableCurs = Object.keys(profile.summariesByCurrency || {});
+      const effectiveCur =
+        !isInitialForCustomer && prevCur && availableCurs.includes(prevCur)
+          ? prevCur
+          : primaryCur;
+
+      selectedCurrencyRef.current = effectiveCur;
+      setSelectedCurrency(effectiveCur);
 
       const effectiveFrom = fromOverride !== undefined ? fromOverride : statementFrom;
       const effectiveTo = toOverride !== undefined ? toOverride : statementTo;
-      const stmt = await getCustomerStatement(
-        customer.id,
-        { from: effectiveFrom || undefined, to: effectiveTo || undefined },
-        defaultCur
+      const currenciesToFetch = availableCurs.length > 0 ? availableCurs : [effectiveCur];
+      const fetchedEntries = await Promise.all(
+        currenciesToFetch.map(async (cur) => {
+          const s = await getCustomerStatement(
+            customer.id,
+            { from: effectiveFrom || undefined, to: effectiveTo || undefined },
+            cur
+          );
+          return [cur, s] as const;
+        })
       );
-      setStatement(stmt);
+      const nextByCur: Record<string, CustomerStatement> = {};
+      for (const [cur, s] of fetchedEntries) {
+        if (s) nextByCur[cur] = s;
+      }
+      setStatementsByCurrency(nextByCur);
+      setStatement(nextByCur[effectiveCur] || fetchedEntries[0]?.[1] || null);
     } catch (err) {
       console.error("[CustomerDetailPage] Failed to load customer data:", err);
     } finally {
@@ -171,8 +203,12 @@ export function CustomerDetailPage({
 
   const handleCurrencyChange = async (cur: string) => {
     playTapSound();
+    selectedCurrencyRef.current = cur;
     setSelectedCurrency(cur);
     setInvoicePage(1);
+    if (statementsByCurrency[cur]) {
+      setStatement(statementsByCurrency[cur]);
+    }
     if (customer?.id) {
       const stmt = await getCustomerStatement(
         customer.id,
@@ -180,6 +216,9 @@ export function CustomerDetailPage({
         cur
       );
       setStatement(stmt);
+      if (stmt) {
+        setStatementsByCurrency((prev) => ({ ...prev, [cur]: stmt }));
+      }
     }
   };
 
@@ -188,12 +227,24 @@ export function CustomerDetailPage({
     setStatementTo(toVal);
     setStatementPage(1);
     if (customer?.id) {
-      const stmt = await getCustomerStatement(
-        customer.id,
-        { from: fromVal || undefined, to: toVal || undefined },
-        selectedCurrency
+      const availableCurs = Object.keys(financialProfile?.summariesByCurrency || {});
+      const currenciesToFetch = availableCurs.length > 0 ? availableCurs : [selectedCurrency];
+      const fetchedEntries = await Promise.all(
+        currenciesToFetch.map(async (cur) => {
+          const s = await getCustomerStatement(
+            customer.id,
+            { from: fromVal || undefined, to: toVal || undefined },
+            cur
+          );
+          return [cur, s] as const;
+        })
       );
-      setStatement(stmt);
+      const nextByCur: Record<string, CustomerStatement> = {};
+      for (const [cur, s] of fetchedEntries) {
+        if (s) nextByCur[cur] = s;
+      }
+      setStatementsByCurrency(nextByCur);
+      setStatement(nextByCur[selectedCurrency] || fetchedEntries[0]?.[1] || null);
     }
   };
 
@@ -311,11 +362,31 @@ export function CustomerDetailPage({
     scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const orderedActiveStatements = useMemo(() => {
+    const orderedKeys = Object.keys(SUPPORTED_CURRENCIES);
+    const list: CustomerStatement[] = [];
+    for (const key of orderedKeys) {
+      if (statementsByCurrency[key]) {
+        list.push(statementsByCurrency[key]);
+      }
+    }
+    for (const [key, stmt] of Object.entries(statementsByCurrency)) {
+      if (!orderedKeys.includes(key) && stmt) {
+        list.push(stmt);
+      }
+    }
+    return list;
+  }, [statementsByCurrency]);
+
   const handlePrintStatement = async () => {
     if (!statement || isExportingStatement) return;
     setIsExportingStatement(true);
     try {
-      await printCustomerStatement(statement, customer, selectedCurrency);
+      const multiList =
+        orderedActiveStatements.length > 1 && statementViewAllCurrencies
+          ? orderedActiveStatements
+          : undefined;
+      await printCustomerStatement(statement, customer, selectedCurrency, multiList);
       toast.success("تم إرسال كشف الحساب للطباعة");
     } catch (err: any) {
       toast.error(err?.message || "تعذر طباعة كشف الحساب");
@@ -544,18 +615,25 @@ export function CustomerDetailPage({
                 </span>
 
                 <div className="flex items-center gap-1 bg-secondary/60 p-0.5 rounded-xl border border-border/60">
-                  {Object.keys(financialProfile?.summariesByCurrency || { SDG: {} }).map((cur) => (
+                  {Object.keys(financialProfile?.summariesByCurrency || { [selectedCurrency]: {} }).map((cur) => (
                     <button
                       key={cur}
                       type="button"
                       onClick={() => void handleCurrencyChange(cur)}
-                      className={`px-2.5 py-1 text-xs rounded-lg font-mono font-bold transition-all cursor-pointer ${
+                      className={`px-2.5 py-1 text-xs rounded-lg font-mono font-bold transition-all cursor-pointer inline-flex items-center gap-1 ${
                         selectedCurrency === cur
                           ? "bg-primary text-white shadow-2xs"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      {cur}
+                      <span>{cur}</span>
+                      <span
+                        className={`font-sans text-[10px] ${
+                          selectedCurrency === cur ? "text-white/85" : "text-muted-foreground/80"
+                        }`}
+                      >
+                        ({getCurrencyShortLabel(cur)})
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -576,20 +654,86 @@ export function CustomerDetailPage({
               </button>
             </div>
 
+            {Object.keys(financialProfile?.summariesByCurrency || {}).length > 1 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {Object.entries(financialProfile?.summariesByCurrency || {}).map(([cur, sum]) => {
+                  const code = sanitizeCurrency(cur, "SDG");
+                  const conf = SUPPORTED_CURRENCIES[code];
+                  const curLabel = getCurrencyShortLabel(code);
+                  const isFocused = selectedCurrency === cur;
+                  return (
+                    <button
+                      key={cur}
+                      type="button"
+                      onClick={() => void handleCurrencyChange(cur)}
+                      className={`text-right rounded-xl border p-2.5 space-y-1.5 transition-all cursor-pointer ${
+                        isFocused
+                          ? "border-primary bg-primary/[0.04] ring-1 ring-primary/30"
+                          : "border-border/60 bg-secondary/25 hover:border-primary/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-1">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-foreground">
+                          <span aria-hidden="true">{conf.flag}</span>
+                          <span>{conf.nameAr}</span>
+                        </span>
+                        <span className="rounded-md bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[9.5px] font-mono font-black text-primary">
+                          {code} ({curLabel})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 text-[10.5px] font-mono">
+                        <div>
+                          <span className="text-[9.5px] text-muted-foreground font-sans block">الفواتير</span>
+                          <strong className="text-foreground font-black tabular-nums">
+                            {formatNumber(sum.totalInvoiced)} {curLabel}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-[9.5px] text-muted-foreground font-sans block">المسدد</span>
+                          <strong className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums">
+                            {formatNumber(sum.totalPaid)} {curLabel}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-[9.5px] text-muted-foreground font-sans block">المستحق</span>
+                          <strong
+                            className={`font-black tabular-nums ${
+                              sum.outstanding > 0.009
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-emerald-600 dark:text-emerald-400"
+                            }`}
+                          >
+                            {formatNumber(sum.outstanding)} {curLabel}
+                          </strong>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {isSummaryCollapsed ? (
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs px-2 py-1 bg-secondary/30 rounded-xl font-mono">
                 <div>
                   <span className="text-muted-foreground font-sans text-[11px]">المفوتر: </span>
-                  <strong className="text-foreground font-black">{formatNumber(currentSummary.totalInvoiced)} {selectedCurrency}</strong>
+                  <strong className="text-foreground font-black">
+                    {formatNumber(currentSummary.totalInvoiced)} {getCurrencyShortLabel(selectedCurrency)}{" "}
+                    <span className="text-[10px] font-normal text-muted-foreground">({selectedCurrency})</span>
+                  </strong>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans text-[11px]">المسدد: </span>
-                  <strong className="text-emerald-600 dark:text-emerald-400 font-black">{formatNumber(currentSummary.totalPaid)} {selectedCurrency}</strong>
+                  <strong className="text-emerald-600 dark:text-emerald-400 font-black">
+                    {formatNumber(currentSummary.totalPaid)} {getCurrencyShortLabel(selectedCurrency)}{" "}
+                    <span className="text-[10px] font-normal">({selectedCurrency})</span>
+                  </strong>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans text-[11px]">المتبقي القائم: </span>
                   <strong className={currentSummary.outstanding > 0.009 ? "text-rose-600 font-black" : "text-emerald-600 font-bold"}>
-                    {formatNumber(currentSummary.outstanding)} {selectedCurrency}
+                    {formatNumber(currentSummary.outstanding)} {getCurrencyShortLabel(selectedCurrency)}{" "}
+                    <span className="text-[10px] font-normal">({selectedCurrency})</span>
                   </strong>
                 </div>
                 <div className="text-[11px] font-sans text-muted-foreground">
@@ -602,7 +746,9 @@ export function CustomerDetailPage({
                   <span className="text-[10.5px] font-bold text-muted-foreground block">إجمالي الفواتير الصادرة</span>
                   <p className="font-mono text-base sm:text-lg font-black text-foreground tabular-nums">
                     {formatNumber(currentSummary.totalInvoiced)}{" "}
-                    <span className="text-[10px] font-normal text-muted-foreground">{selectedCurrency}</span>
+                    <span className="text-[10px] font-normal text-muted-foreground">
+                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                    </span>
                   </p>
                   <span className="text-[10px] text-muted-foreground block">
                     {currentSummary.totalInvoicesCount} فاتورة محررة
@@ -613,7 +759,9 @@ export function CustomerDetailPage({
                   <span className="text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400 block">إجمالي المبالغ المدفوعة</span>
                   <p className="font-mono text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
                     {formatNumber(currentSummary.totalPaid)}{" "}
-                    <span className="text-[10px] font-normal">{selectedCurrency}</span>
+                    <span className="text-[10px] font-normal">
+                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                    </span>
                   </p>
                   <span className="text-[10px] text-emerald-600/80 block">
                     {currentSummary.paidInvoicesCount} مسددة بالكامل
@@ -624,7 +772,9 @@ export function CustomerDetailPage({
                   <span className="text-[10.5px] font-bold text-rose-700 dark:text-rose-400 block">المبالغ المستحقة (مديونية)</span>
                   <p className="font-mono text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 tabular-nums">
                     {formatNumber(currentSummary.outstanding)}{" "}
-                    <span className="text-[10px] font-normal">{selectedCurrency}</span>
+                    <span className="text-[10px] font-normal">
+                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                    </span>
                   </p>
                   <span className="text-[10px] text-rose-600/80 block">
                     {currentSummary.overdueInvoicesCount > 0
@@ -637,7 +787,9 @@ export function CustomerDetailPage({
                   <span className="text-[10.5px] font-bold text-muted-foreground block">أرصدة مقدمة / دفعات دائنة</span>
                   <p className="font-mono text-base sm:text-lg font-black text-foreground tabular-nums">
                     {formatNumber(currentSummary.advanceCredit)}{" "}
-                    <span className="text-[10px] font-normal text-muted-foreground">{selectedCurrency}</span>
+                    <span className="text-[10px] font-normal text-muted-foreground">
+                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                    </span>
                   </p>
                   <span className="text-[10px] text-muted-foreground block">
                     {currentSummary.partialInvoicesCount} فاتورة بسداد جزئي
@@ -650,7 +802,7 @@ export function CustomerDetailPage({
           {/* 3. تبويبات مساحة العمل الكاملة */}
           <div className="rounded-2xl border border-border/70 bg-card p-1 shadow-2xs flex items-center gap-1.5 text-xs font-black overflow-x-auto scrollbar-none touch-pan-x overscroll-x-contain select-none">
             {[
-              { key: "invoices" as const, label: `سجل الفواتير (${invoices.length})` },
+              { key: "invoices" as const, label: `سجل الفواتير (${currentInvoicesForCurrency.length})` },
               { key: "statement" as const, label: `كشف الحساب المالي (${selectedCurrency}) (${statement?.lines.length || 0})` },
               { key: "info" as const, label: "بيانات العميل والافتتاحي" },
             ].map((tab) => (
@@ -734,7 +886,7 @@ export function CustomerDetailPage({
                           {pf.meta.date}
                         </span>
                         <span className="font-mono font-bold text-foreground tabular-nums">
-                          {formatNumber(pf.totalAmount)} {pf.currency || "SDG"}
+                          {formatNumber(pf.totalAmount)} {getCurrencyShortLabel(pf.currency)} ({sanitizeCurrency(pf.currency, "SDG")})
                         </span>
                       </div>
                       <div className="flex items-center gap-1">
@@ -782,6 +934,10 @@ export function CustomerDetailPage({
                 statementPage={statementPage}
                 setStatementPage={setStatementPage}
                 totalStatementPages={totalStatementPages}
+                allStatements={orderedActiveStatements}
+                onSelectCurrency={(cur) => void handleCurrencyChange(cur)}
+                statementViewAllCurrencies={statementViewAllCurrencies}
+                onToggleViewAllCurrencies={setStatementViewAllCurrencies}
               />
             )}
 
@@ -810,7 +966,9 @@ export function CustomerDetailPage({
                   <div className="border-t border-border/50 pt-3">
                     <span className="text-[10.5px] text-muted-foreground font-bold">حركة الرصيد الافتتاحي</span>
                     <p className="font-bold text-foreground mt-0.5 text-xs">
-                      {formatNumber(customer.openingBalance)} {customer.openingBalanceCurrency || "SDG"}{" "}
+                      {formatNumber(customer.openingBalance)}{" "}
+                      {getCurrencyShortLabel(customer.openingBalanceCurrency)} (
+                      {sanitizeCurrency(customer.openingBalanceCurrency, "SDG")}){" "}
                       ({customer.openingBalanceType === "credit" ? "رصيد دائن / دفعة مقدمة" : "مديونية سابقة مستحقة"})
                     </p>
                     {customer.openingBalanceNotes && (
@@ -859,6 +1017,7 @@ export function CustomerDetailPage({
         onOpenChange={setReceiptDialogOpen}
         initialCustomerId={customer.id}
         initialInvoiceId={targetReceiptInvoiceId}
+        defaultCurrency={sanitizeCurrency(selectedCurrency, "SDG")}
         onRecorded={() => {
           void loadAllCustomerData();
           onCustomerUpdated?.();

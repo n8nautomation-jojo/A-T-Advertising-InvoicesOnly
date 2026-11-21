@@ -17,6 +17,8 @@ import { Switch } from "@/components/ui/switch";
 import type { ProformaMeta, ProformaLine } from "@/lib/proforma/types";
 import { ProformaLineEditor } from "./ProformaLineEditor";
 import { calculateProformaTotals } from "@/lib/proforma/store";
+import { detectInvoiceLanguage } from "@/lib/billing/languageHelper";
+import { sanitizeCurrency } from "@/lib/currency/types";
 import { formatNumber } from "@/lib/printCalculator";
 import { CurrencySelector } from "@/components/currency/CurrencySelector";
 import { useCustomers, type CustomerRecord } from "@/lib/customersStore";
@@ -42,7 +44,10 @@ export function ProformaForm({
   onSaveAsNewCustomerChange,
 }: Props) {
   const customers = useCustomers();
-  const totals = calculateProformaTotals(lines);
+  const currency = sanitizeCurrency(meta.currency, "SDG");
+  const isRtl =
+    detectInvoiceLanguage(meta.language, meta.customerName, meta.customerEnName, lines) === "ar";
+  const totals = calculateProformaTotals(lines, currency, isRtl);
   // إذا كان كلا الاسمين غير مدخل بعد، تفتح البطاقة تلقائياً؛ وإلا يمكن طيها لتوفير المساحة
   const [isCustomerOpen, setIsCustomerOpen] = useState(!meta.customerName?.trim() && !meta.customerEnName?.trim());
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -246,7 +251,7 @@ export function ProformaForm({
                 عملة الفاتورة
               </label>
               <CurrencySelector
-                value={meta.currency || "SDG"}
+                value={currency}
                 onChange={(c) => updateField("currency", c)}
                 locale={meta.language === "en" ? "en" : "ar"}
               />
@@ -344,7 +349,7 @@ export function ProformaForm({
 
       {/* 2. منطقة البنود القابلة للتمرير الوحيدة والسلسة بدون شريط تمرير داخلي مكرر */}
       <div className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-2">
-        <ProformaLineEditor lines={lines} onChange={onLinesChange} currency={meta.currency || "SDG"} />
+        <ProformaLineEditor lines={lines} onChange={onLinesChange} currency={currency} />
       </div>
 
       {/* 3. بطاقة الإجماليات الثابتة في الأسفل (دائماً ظاهرة أمام المستخدم بدون أي تمرير) */}
@@ -362,7 +367,7 @@ export function ProformaForm({
               {formatNumber(totals.totalAmount)}
             </span>
             <span className="text-[10px] font-black font-mono text-foreground uppercase">
-              {meta.currency || "SDG"}
+              {currency}
             </span>
           </div>
         </div>

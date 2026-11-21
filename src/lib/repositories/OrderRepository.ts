@@ -8,6 +8,7 @@ import type { capSQLiteSet } from "@capacitor-community/sqlite";
 import { getDb } from "@/lib/database";
 import { notifyDataChanged } from "@/lib/backup/notify";
 import type { PrintOrder, OrderStatus, OrderPriority, OrderItemRecord } from "@/lib/ordersStore";
+import { sanitizeCurrency } from "@/lib/currency/types";
 
 function rowToOrder(row: any, items: any[]): PrintOrder {
   return {
@@ -24,6 +25,7 @@ function rowToOrder(row: any, items: any[]): PrintOrder {
     totalArea: row.total_area || 0,
     totalCost: row.total_cost || 0,
     paidAmount: row.paid_amount || 0,
+    currency: sanitizeCurrency(row.currency, "SDG"),
     branch: row.branch || "",
     notes: row.notes || undefined,
     invoiceSerial: row.invoice_serial || undefined,
@@ -79,8 +81,8 @@ export async function upsertOrder(order: PrintOrder): Promise<void> {
       statement: `INSERT INTO orders
         (id, order_number, customer_name, customer_phone, client_type,
          status, priority, created_at, delivery_date,
-         total_area, total_cost, paid_amount, branch, notes, invoice_serial)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         total_area, total_cost, paid_amount, currency, branch, notes, invoice_serial)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET
          order_number   = excluded.order_number,
          customer_name  = excluded.customer_name,
@@ -92,6 +94,7 @@ export async function upsertOrder(order: PrintOrder): Promise<void> {
          total_area     = excluded.total_area,
          total_cost     = excluded.total_cost,
          paid_amount    = excluded.paid_amount,
+         currency       = excluded.currency,
          branch         = excluded.branch,
          notes          = excluded.notes,
          invoice_serial = excluded.invoice_serial`,
@@ -108,6 +111,7 @@ export async function upsertOrder(order: PrintOrder): Promise<void> {
         order.totalArea,
         order.totalCost,
         order.paidAmount,
+        sanitizeCurrency(order.currency, "SDG"),
         order.branch || null,
         order.notes || null,
         order.invoiceSerial || null,

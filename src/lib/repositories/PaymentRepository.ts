@@ -300,6 +300,21 @@ export async function recordCustomerReceipt(
     }
     const currency: AppCurrency = allocatedCurrency ?? sanitizeCurrency(input.currency, "SDG");
 
+    const accountRes = await db.query(
+      "SELECT id, COALESCE(currency, 'SDG') AS currency FROM financial_accounts WHERE id = ? LIMIT 1",
+      [input.accountId]
+    );
+    const accountRow = accountRes.values?.[0];
+    if (!accountRow) {
+      throw new Error("الحساب المالي المحدد غير موجود.");
+    }
+    const accountCurrency = sanitizeCurrency(accountRow.currency, "SDG");
+    if (accountCurrency !== currency) {
+      throw new Error(
+        `عملة الحساب المالي (${accountCurrency}) لا تطابق عملة السند (${currency}). يرجى اختيار حساب بنفس العملة.`
+      );
+    }
+
     const validation = validateAllocations(amount, allocations, invoices);
     if (!validation.ok) throw new Error(validation.errors.join("، "));
 
@@ -453,6 +468,21 @@ export async function recordSupplierPayment(
     }
     const currency: AppCurrency = allocatedCurrency ?? sanitizeCurrency(input.currency, "SDG");
 
+    const accountRes = await db.query(
+      "SELECT id, COALESCE(currency, 'SDG') AS currency FROM financial_accounts WHERE id = ? LIMIT 1",
+      [input.accountId]
+    );
+    const accountRow = accountRes.values?.[0];
+    if (!accountRow) {
+      throw new Error("الحساب المالي المحدد غير موجود.");
+    }
+    const accountCurrency = sanitizeCurrency(accountRow.currency, "SDG");
+    if (accountCurrency !== currency) {
+      throw new Error(
+        `عملة الحساب المالي (${accountCurrency}) لا تطابق عملة السند (${currency}). يرجى اختيار حساب بنفس العملة.`
+      );
+    }
+
     const validation = validateAllocations(amount, allocations, invoices);
     if (!validation.ok) throw new Error(validation.errors.join("، "));
 
@@ -586,10 +616,29 @@ export async function recordTransfer(
   const amount = sanitizeMoney(rawAmount);
   if (!input.fromAccountId || !input.toAccountId) throw new Error("يجب تحديد الحسابين");
   if (input.fromAccountId === input.toAccountId) throw new Error("لا يمكن التحويل إلى الحساب نفسه");
-  const currency = sanitizeCurrency(input.currency, "SDG");
 
   return withDbWriteLock(async () => {
     const db = await getDb();
+    const [fromRes, toRes] = await Promise.all([
+      db.query("SELECT id, COALESCE(currency, 'SDG') AS currency FROM financial_accounts WHERE id = ? LIMIT 1", [
+        input.fromAccountId,
+      ]),
+      db.query("SELECT id, COALESCE(currency, 'SDG') AS currency FROM financial_accounts WHERE id = ? LIMIT 1", [
+        input.toAccountId,
+      ]),
+    ]);
+    const fromAccount = fromRes.values?.[0];
+    const toAccount = toRes.values?.[0];
+    if (!fromAccount || !toAccount) {
+      throw new Error("أحد الحسابين الماليين المحددين غير موجود.");
+    }
+    const fromCurrency = sanitizeCurrency(fromAccount.currency, "SDG");
+    const toCurrency = sanitizeCurrency(toAccount.currency, "SDG");
+    if (fromCurrency !== toCurrency) {
+      throw new Error("لا يمكن التحويل المباشر بين حسابين بعملتين مختلفتين.");
+    }
+    const currency: AppCurrency = fromCurrency;
+
     const transferId = newId("trf", nowIso);
     await db.beginTransaction();
     try {

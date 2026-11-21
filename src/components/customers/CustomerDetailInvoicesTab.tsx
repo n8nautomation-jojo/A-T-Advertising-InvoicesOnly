@@ -212,7 +212,8 @@ export function CustomerDetailInvoicesTab({
           <div className="flex items-center gap-3 font-mono text-[11px]">
             <span>
               إجمالي الصفحة:{" "}
-              <strong className="text-foreground font-black">{formatNumber(pageFinancials.pageTotal)}</strong>
+              <strong className="text-foreground font-black">{formatNumber(pageFinancials.pageTotal)}</strong>{" "}
+              {selectedCurrency}
             </span>
             <span>
               المتبقي في الصفحة:{" "}

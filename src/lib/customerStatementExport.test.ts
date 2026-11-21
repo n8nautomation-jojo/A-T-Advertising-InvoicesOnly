@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { buildStatementDomElement } from "./customerStatementExport";
+import {
+  buildStatementDomElement,
+  buildMultiCurrencyStatementDomElement,
+} from "./customerStatementExport";
 import type { CustomerStatement } from "@/lib/repositories/ReportsRepository";
 import type { CustomerRecord } from "@/lib/customersStore";
 
@@ -10,6 +13,9 @@ describe("Customer Statement of Account A4 Document", () => {
     name: "حسام الدين عبادي",
     phone: "0946548154",
     type: "client",
+    address: "",
+    totalOrders: 2,
+    totalSpent: 3912500,
     balance: 3912500,
     createdAt: "2026-11-01T00:00:00Z",
   };
@@ -67,8 +73,8 @@ describe("Customer Statement of Account A4 Document", () => {
 
     // 2. Centered bank & tafqeet strip + reconciliation notice
     expect(html).toContain("text-align: center");
-    expect(text).toContain("الحساب المعتمد للسداد: بنك الخرطوم");
-    expect(text).toContain("خلال 7 أيام من تاريخ الإصدار");
+    expect(html).toContain("الحساب المعتمد للسداد: بنك الخرطوم");
+    expect(html).toContain("خلال 7 أيام من تاريخ الإصدار");
 
     // 3. Signatory layout: name directly above title, both beside signature inside finance card
     const namePos = html.indexOf("طارق عثمان علي");
@@ -77,5 +83,46 @@ describe("Customer Statement of Account A4 Document", () => {
     expect(namePos).toBeGreaterThan(-1);
     expect(titlePos).toBeGreaterThan(namePos);
     expect(sigPos).toBeGreaterThan(titlePos);
+  });
+
+  it("renders separated per-currency summary windows and ledgers for multi-currency customers without mixing amounts", () => {
+    const usdStatement: CustomerStatement = {
+      customerId: customer.id,
+      customerName: customer.name,
+      currency: "USD",
+      openingBalance: 0,
+      broughtForwardBalance: 0,
+      periodFrom: "2026-11-01",
+      periodTo: "2026-11-20",
+      totalInvoiced: 2050,
+      totalCollected: 50,
+      outstanding: 2000,
+      netBalance: 2000,
+      lines: [
+        {
+          kind: "invoice",
+          id: "inv-usd-1",
+          reference: "26-0009",
+          date: "2026-11-18",
+          label: "فاتورة تصميم دولية",
+          debit: 2050,
+          credit: 0,
+          runningBalance: 2050,
+        },
+      ],
+    };
+
+    const el = buildMultiCurrencyStatementDomElement([statement, usdStatement], customer);
+    const text = el.textContent || "";
+
+    expect(text).toContain("كشف حساب مالي مفصّل حسب العملة");
+    expect(text).toContain("جنيه سوداني (SDG)");
+    expect(text).toContain("دولار أمريكي (USD)");
+    expect(text).toContain("3,912,500");
+    expect(text).toContain("2,000");
+    expect(text).toContain("جدول حركات الحساب بعملة: جنيه سوداني (SDG)");
+    expect(text).toContain("جدول حركات الحساب بعملة: دولار أمريكي (USD)");
+    expect(text).not.toContain("3,914,500");
+    expect(text).not.toContain("3,914,550");
   });
 });

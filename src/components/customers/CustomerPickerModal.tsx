@@ -17,6 +17,12 @@ import {
   normalizePhoneDigits,
 } from "@/lib/customers/customerMatching";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { sanitizeCurrency } from "@/lib/currency/types";
+import {
+  getCustomerCurrencyBuckets,
+  type LiveBalancesMap,
+} from "./CustomersDirectoryViews";
 import { playTapSound, playSuccessSound } from "@/lib/soundEffects";
 import { toast } from "sonner";
 
@@ -47,9 +53,7 @@ export function CustomerPickerModal({
   const [newPhone, setNewPhone] = useState("");
   const [newType, setNewType] = useState<CustomerType>("company");
   const [isSaving, setIsSaving] = useState(false);
-  const [liveBalances, setLiveBalances] = useState<
-    Record<string, { outstanding: number; invoiced: number; collected: number; overdueCount: number }>
-  >({});
+  const [liveBalances, setLiveBalances] = useState<LiveBalancesMap>({});
 
   useEffect(() => {
     if (open) {
@@ -325,7 +329,17 @@ export function CustomerPickerModal({
                     const isSelected = selectedCustomerId === cust.id;
                     const cfg = CUSTOMER_TYPE_CONFIG[cust.type] || CUSTOMER_TYPE_CONFIG.individual;
                     const live = liveBalances[cust.id];
-                    const effectiveOutstanding = live ? live.outstanding : cust.balance;
+                    const buckets = getCustomerCurrencyBuckets(cust, live, "ALL");
+                    const debtBuckets = buckets.filter((b) => b.outstanding > 0.009);
+                    const fallbackCreditAmount = !live && cust.balance < -0.009
+                      ? Math.abs(cust.balance)
+                      : live && !live.byCurrency && live.outstanding < -0.009
+                        ? Math.abs(live.outstanding)
+                        : 0;
+                    const fallbackCreditCurrency = sanitizeCurrency(
+                      live?.primaryCurrency ?? cust.openingBalanceCurrency,
+                      "SDG"
+                    );
 
                     return (
                       <button
@@ -368,15 +382,26 @@ export function CustomerPickerModal({
                         </div>
 
                         <div className="text-left shrink-0">
-                          {effectiveOutstanding > 0.009 ? (
-                            <div className="text-[11px] font-mono font-black text-rose-600 dark:text-rose-400 tabular-nums">
-                              {formatNumber(effectiveOutstanding)}
-                              <span className="text-[9.5px] block font-sans text-rose-600/75 font-bold">مديونية</span>
+                          {debtBuckets.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {debtBuckets.map((b) => (
+                                <div
+                                  key={b.currency}
+                                  className="text-[11px] font-mono font-black text-rose-600 dark:text-rose-400 tabular-nums leading-tight whitespace-nowrap"
+                                >
+                                  {formatNumber(b.outstanding)} {getCurrencyShortLabel(b.currency)}
+                                </div>
+                              ))}
+                              <span className="text-[9.5px] block font-sans text-rose-600/75 font-bold">
+                                مديونية
+                              </span>
                             </div>
-                          ) : effectiveOutstanding < -0.009 ? (
-                            <div className="text-[11px] font-mono font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                              {formatNumber(Math.abs(effectiveOutstanding))}
-                              <span className="text-[9.5px] block font-sans text-emerald-600/75 font-bold">رصيد مقدم</span>
+                          ) : fallbackCreditAmount > 0.009 ? (
+                            <div className="text-[11px] font-mono font-black text-emerald-600 dark:text-emerald-400 tabular-nums whitespace-nowrap">
+                              {formatNumber(fallbackCreditAmount)} {getCurrencyShortLabel(fallbackCreditCurrency)}
+                              <span className="text-[9.5px] block font-sans text-emerald-600/75 font-bold">
+                                رصيد مقدم
+                              </span>
                             </div>
                           ) : (
                             <span className="text-[11px] text-muted-foreground font-bold">متزن (0)</span>

@@ -21,6 +21,7 @@ import {
 import type { CustomerRecord } from "@/lib/customersStore";
 import type { CustomerAccount, OpenSalesInvoiceRow } from "@/lib/repositories/LedgerRepository";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { sanitizePositiveDecimal } from "./shared/numericInput";
 import type { AllocationFormRow } from "./shared/allocateFifo";
 
@@ -38,6 +39,7 @@ interface ReceiptCustomerSelectorProps {
   creatingCustomer: boolean;
   onQuickAddCustomer: () => void;
   customerSummary: CustomerAccount | null;
+  currencyLabel?: string;
 }
 
 export function ReceiptCustomerSelectorSection({
@@ -54,6 +56,7 @@ export function ReceiptCustomerSelectorSection({
   creatingCustomer,
   onQuickAddCustomer,
   customerSummary,
+  currencyLabel = getCurrencyShortLabel("SDG"),
 }: ReceiptCustomerSelectorProps) {
   return (
     <div className="space-y-1.5">
@@ -141,7 +144,7 @@ export function ReceiptCustomerSelectorSection({
           مفوتر {formatNumber(customerSummary.invoicedTotal)} · محصّل{" "}
           {formatNumber(customerSummary.collectedTotal)} · متبقي{" "}
           <span className="text-foreground font-black">
-            {formatNumber(customerSummary.outstanding)} ج.س
+            {formatNumber(customerSummary.outstanding)} {currencyLabel}
           </span>
         </p>
       )}
@@ -162,6 +165,7 @@ interface ReceiptInvoiceAllocationsProps {
   onPickInvoiceToPay: (invId: string) => void;
   onPayFullInvoice: (index: number) => void;
   onAutoAllocate: () => void;
+  currencyLabel?: string;
 }
 
 export function ReceiptInvoiceAllocationsSection({
@@ -177,6 +181,7 @@ export function ReceiptInvoiceAllocationsSection({
   onPickInvoiceToPay,
   onPayFullInvoice,
   onAutoAllocate,
+  currencyLabel = getCurrencyShortLabel("SDG"),
 }: ReceiptInvoiceAllocationsProps) {
   return (
     <div className="rounded-2xl border border-border/70 bg-card p-3.5 space-y-3 shadow-xs">
@@ -236,7 +241,7 @@ export function ReceiptInvoiceAllocationsSection({
                     — اضغط لاختيار الفاتورة المراد سدادها —
                   </SelectItem>
                   {unallocatedCustomerInvoices.map((inv) => {
-                    const curLabel = !inv.currency || inv.currency === "SDG" ? "ج.س" : inv.currency;
+                    const curLabel = getCurrencyShortLabel(inv.currency);
                     return (
                       <SelectItem key={inv.id} value={inv.id} className="py-2">
                         <div className="flex items-center justify-between gap-3 text-xs w-full">
@@ -301,7 +306,9 @@ export function ReceiptInvoiceAllocationsSection({
                 const rowAmount = Number(row.amount) || 0;
                 const outstanding = invoice?.settlement.outstanding ?? 0;
                 const isFull = rowAmount >= outstanding && outstanding > 0;
-                const curLabel = !invoice?.currency || invoice.currency === "SDG" ? "ج.س" : invoice.currency;
+                const curLabel = invoice?.currency
+                  ? getCurrencyShortLabel(invoice.currency)
+                  : currencyLabel;
 
                 return (
                   <div
@@ -389,12 +396,16 @@ export function ReceiptInvoiceAllocationsSection({
             <div className="rounded-xl bg-muted/40 p-2.5 flex items-center justify-between gap-2 text-[10.5px] font-bold">
               <span>
                 المسدد للفواتير:{" "}
-                <strong className="text-foreground">{formatNumber(allocatedTotal)} ج.س</strong>
+                <strong className="text-foreground">
+                  {formatNumber(allocatedTotal)} {currencyLabel}
+                </strong>
               </span>
               {remaining > 0 ? (
                 <span className="text-muted-foreground">
                   متبقي كدفعة مقدمة:{" "}
-                  <strong className="text-primary">{formatNumber(remaining)} ج.س</strong>
+                  <strong className="text-primary">
+                    {formatNumber(remaining)} {currencyLabel}
+                  </strong>
                 </span>
               ) : (
                 <span className="text-emerald-700 dark:text-emerald-400 font-black">

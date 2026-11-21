@@ -11,7 +11,7 @@ import {
   convertProformaToSalesInvoice,
   saveCustomInvoice,
 } from "@/lib/billing/store";
-import { AppCurrency } from "@/lib/currency/types";
+import { AppCurrency, sanitizeCurrency } from "@/lib/currency/types";
 import { detectInvoiceLanguage } from "@/lib/billing/languageHelper";
 import { getLocalIsoDate } from "@/lib/dateUtils";
 import {
@@ -20,7 +20,7 @@ import {
   type CustomerRecord,
   type CustomerType,
 } from "@/lib/customersStore";
-import { settlementFor } from "@/lib/financeStore";
+import { settlementFor, useSettlementVersion } from "@/lib/financeStore";
 import { router } from "@/router";
 import {
   printCustomInvoiceDocument,
@@ -34,6 +34,7 @@ interface UseCustomInvoiceFormParams {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialType?: CustomInvoiceType;
+  initialCurrency?: AppCurrency;
   initialItems?: CustomInvoiceItem[];
   invoiceToEdit?: CustomInvoice | null;
   onSaved?: (invoice: CustomInvoice) => void;
@@ -53,6 +54,7 @@ export function useCustomInvoiceForm({
   open,
   onOpenChange,
   initialType = "sales",
+  initialCurrency,
   initialItems,
   invoiceToEdit,
   onSaved,
@@ -92,10 +94,20 @@ export function useCustomInvoiceForm({
   const draftIdRef = useRef<string>("");
   const saveLockRef = useRef(false);
 
+  const settlementVersion = useSettlementVersion();
+
   const isCustomerLocked = useMemo(() => {
+    void settlementVersion;
     if (!invoiceToEdit || invoiceToEdit.meta.type !== "sales") return false;
     return settlementFor(invoiceToEdit.id, Number(invoiceToEdit.totalAmount) || 0).paid > 0.009;
-  }, [invoiceToEdit]);
+  }, [invoiceToEdit, settlementVersion]);
+
+  const isCurrencyLocked = useMemo(() => {
+    void settlementVersion;
+    if (!invoiceToEdit) return false;
+    if (invoiceToEdit.meta.type !== "sales" && invoiceToEdit.meta.type !== "purchase") return false;
+    return settlementFor(invoiceToEdit.id, Number(invoiceToEdit.totalAmount) || 0).paid > 0.009;
+  }, [invoiceToEdit, settlementVersion]);
 
   useEffect(() => {
     if (!open) return;
@@ -128,7 +140,7 @@ export function useCustomInvoiceForm({
       setAccountName(invoiceToEdit.meta.accountName || DEFAULT_ACCOUNT_NAME);
       setSignatoryTitle(invoiceToEdit.meta.signatoryTitle || DEFAULT_SIGNATORY_TITLE);
       setLanguage(invoiceToEdit.meta.language || "auto");
-      setCurrency((invoiceToEdit.currency || invoiceToEdit.meta.currency || "SDG") as AppCurrency);
+      setCurrency(sanitizeCurrency(invoiceToEdit.currency || invoiceToEdit.meta.currency, "SDG"));
       setItems(invoiceToEdit.items || []);
     } else {
       draftIdRef.current = `custom-inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -142,21 +154,19 @@ export function useCustomInvoiceForm({
       setDate(getLocalIsoDate());
 
       const prefilledCustomerId: string | null = initialCustomerId ?? initialCustomer?.id ?? null;
-      let prefilledPartyName =
-        initialCustomer?.name ?? (initialType === "purchase" ? initialSupplier?.name ?? "" : "");
-
-      if (prefilledCustomerId && !prefilledPartyName) {
-        const found = getCustomersSnapshot().find((c) => c.id === prefilledCustomerId);
-        if (found) {
-          prefilledPartyName = found.name;
-        }
-      }
+      const resolvedCustomer =
+        initialCustomer ??
+        (prefilledCustomerId
+          ? getCustomersSnapshot().find((c) => c.id === prefilledCustomerId) ?? null
+          : null);
+      const prefilledPartyName =
+        resolvedCustomer?.name ?? (initialType === "purchase" ? initialSupplier?.name ?? "" : "");
 
       setCustomerId(prefilledCustomerId);
       setPartyName(prefilledPartyName);
       setPartyEnName("");
       setAttn("");
-      setPhone(initialCustomer?.phone || initialSupplier?.phone || undefined);
+      setPhone(resolvedCustomer?.phone || initialSupplier?.phone || undefined);
       setNotes(undefined);
       setDueDate(undefined);
       setDiscount(undefined);
@@ -166,7 +176,9 @@ export function useCustomInvoiceForm({
       setAccountName(DEFAULT_ACCOUNT_NAME);
       setSignatoryTitle(DEFAULT_SIGNATORY_TITLE);
       setLanguage("auto");
-      setCurrency("SDG");
+      setCurrency(
+        sanitizeCurrency(initialCurrency || resolvedCustomer?.openingBalanceCurrency, "SDG")
+      );
 
       if (initialItems && initialItems.length > 0) {
         setItems(initialItems);
@@ -183,7 +195,7 @@ export function useCustomInvoiceForm({
       }
     }
     setActiveTab("edit");
-  }, [open, invoiceToEdit, initialType, initialItems, initialCustomerId, initialCustomer, initialSupplierId, initialSupplier]);
+  }, [open, invoiceToEdit, initialType, initialCurrency, initialItems, initialCustomerId, initialCustomer, initialSupplierId, initialSupplier]);
 
   const effectiveLang = useMemo(
     () => detectInvoiceLanguage(language, partyName, partyEnName, items),
@@ -443,6 +455,7 @@ export function useCustomInvoiceForm({
     newCustomerAddress,
     setNewCustomerAddress,
     isCustomerLocked,
+    isCurrencyLocked,
     language,
     setLanguage,
     currency,

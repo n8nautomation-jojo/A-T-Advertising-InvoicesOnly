@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -28,6 +28,7 @@ import {
   type Supplier,
 } from "@/lib/repositories/SupplierRepository";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { SupplierPaymentDialog } from "@/components/finance/SupplierPaymentDialog";
 import { CurrencySelector } from "@/components/currency/CurrencySelector";
 import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
@@ -52,9 +53,9 @@ export function SuppliersPage() {
   const [purchaseSupplier, setPurchaseSupplier] = useState<Supplier | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<CustomInvoice | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<CustomInvoice | null>(null);
+  const didAutoSelectCurrencyRef = useRef(false);
 
-  const currencyLabel =
-    currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const currencyLabel = getCurrencyShortLabel(currency);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,6 +64,36 @@ export function SuppliersPage() {
         getAllSuppliers(),
         getSupplierOutstandingMap(currency),
       ]);
+      if (!didAutoSelectCurrencyRef.current) {
+        const currentTotal = Object.values(outstandingMap).reduce(
+          (sum, val) => sum + (Number(val) || 0),
+          0
+        );
+        if (currentTotal > 0) {
+          didAutoSelectCurrencyRef.current = true;
+        } else if (currency === "SDG") {
+          const otherCurrencies = (Object.keys(SUPPORTED_CURRENCIES) as AppCurrency[]).filter(
+            (c) => c !== "SDG"
+          );
+          const otherMaps = await Promise.all(
+            otherCurrencies.map(async (cur) => ({
+              cur,
+              map: await getSupplierOutstandingMap(cur),
+            }))
+          );
+          const active = otherMaps.find(
+            ({ map }) =>
+              Object.values(map).reduce((sum, val) => sum + (Number(val) || 0), 0) > 0
+          );
+          if (active) {
+            didAutoSelectCurrencyRef.current = true;
+            setSuppliers(list);
+            setOutstanding(active.map);
+            setCurrency(active.cur);
+            return;
+          }
+        }
+      }
       setSuppliers(list);
       setOutstanding(outstandingMap);
     } catch (err) {
@@ -168,7 +199,10 @@ export function SuppliersPage() {
                 label="العملة:"
                 dropdownTitle="اختر عملة الأرصدة"
                 value={currency}
-                onChange={setCurrency}
+                onChange={(c) => {
+                  didAutoSelectCurrencyRef.current = true;
+                  setCurrency(c);
+                }}
               />
               <Button
                 type="button"
@@ -362,7 +396,7 @@ export function SuppliersPage() {
                         >
                           <Link
                             to="/reports"
-                            search={{ tab: "statements", supplierId: supplier.id }}
+                            search={{ tab: "statements", supplierId: supplier.id, currency }}
                           >
                             <FileText className="h-3 w-3 text-primary" />
                             <span>كشف حساب</span>
@@ -401,12 +435,14 @@ export function SuppliersPage() {
         open={Boolean(paySupplierId)}
         onOpenChange={(open) => !open && setPaySupplierId(null)}
         initialSupplierId={paySupplierId}
+        defaultCurrency={currency}
       />
 
       <CustomInvoiceDialog
         open={Boolean(purchaseSupplier)}
         onOpenChange={(open) => !open && setPurchaseSupplier(null)}
         initialType="purchase"
+        initialCurrency={currency}
         initialSupplierId={purchaseSupplier?.id}
         initialSupplier={purchaseSupplier}
         onSaved={(saved) => {

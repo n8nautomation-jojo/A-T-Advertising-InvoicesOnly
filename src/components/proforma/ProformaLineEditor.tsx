@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import type { ProformaLine } from "@/lib/proforma/types";
 import { formatNumber } from "@/lib/printCalculator";
 import { playAddSound, playDeleteSound, playTapSound } from "@/lib/soundEffects";
-import type { AppCurrency } from "@/lib/currency/types";
+import { type AppCurrency, sanitizeCurrency } from "@/lib/currency/types";
 
 interface Props {
   lines: ProformaLine[];
@@ -23,6 +23,8 @@ const QUICK_MATERIALS = [
 ];
 
 export function ProformaLineEditor({ lines, onChange, currency = "SDG" }: Props) {
+  const safeCurrency = sanitizeCurrency(currency, "SDG");
+
   const updateLine = (id: string, updates: Partial<ProformaLine>) => {
     const updated = lines.map((l) => {
       if (l.id !== id) return l;
@@ -33,7 +35,7 @@ export function ProformaLineEditor({ lines, onChange, currency = "SDG" }: Props)
       const p = Math.max(0, Number(next.unitPrice) || 0);
 
       const area = Number(((w * h * q) / 10000).toFixed(2));
-      const total = Math.round(area * p);
+      const total = Math.round(area * p * 100) / 100;
 
       return {
         ...next,
@@ -65,6 +67,7 @@ export function ProformaLineEditor({ lines, onChange, currency = "SDG" }: Props)
 
   const addLine = (matName = "فلكس", defaultPrice = 25000) => {
     playAddSound();
+    const effectivePrice = safeCurrency === "SDG" ? defaultPrice : 0;
     const newLine: ProformaLine = {
       id: `pline-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       description: `طباعة ${matName} ${lines.length + 1}`,
@@ -72,9 +75,9 @@ export function ProformaLineEditor({ lines, onChange, currency = "SDG" }: Props)
       width: 100,
       height: 100,
       qty: 1,
-      unitPrice: defaultPrice,
+      unitPrice: effectivePrice,
       area: 1.0,
-      total: defaultPrice,
+      total: effectivePrice,
     };
     onChange([...lines, newLine]);
   };
@@ -241,7 +244,7 @@ export function ProformaLineEditor({ lines, onChange, currency = "SDG" }: Props)
                   </span>
                   <span className="font-mono font-black text-primary text-[12px] whitespace-nowrap">
                     {formatNumber(line.total)}{" "}
-                    <span className="text-[9.5px] font-bold text-muted-foreground uppercase">{currency}</span>
+                    <span className="text-[9.5px] font-bold text-muted-foreground uppercase">{safeCurrency}</span>
                   </span>
                 </div>
               </div>

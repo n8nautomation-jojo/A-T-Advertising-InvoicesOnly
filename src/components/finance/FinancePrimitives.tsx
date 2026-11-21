@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 
 export interface CancelTarget {
   kind: "receipt" | "supplier_payment";
@@ -28,7 +29,7 @@ export function Metric({
   label,
   value,
   tone,
-  currencyLabel = "ج.س",
+  currencyLabel = getCurrencyShortLabel("SDG"),
   icon,
   className,
   onClick,
@@ -138,7 +139,7 @@ export function List<T>({
     <div className="overflow-hidden rounded-2xl border border-border/70 bg-card divide-y divide-border/50">
       {items.map((item, index) => {
         const row = render(item);
-        const currencyLabel = !row.currency || row.currency === "SDG" ? "ج.س" : row.currency;
+        const currencyLabel = getCurrencyShortLabel(row.currency);
         return (
           <div key={row.key ?? index} className="flex items-center justify-between gap-2.5 p-3.5 text-right">
             <div className="min-w-0 flex-1">
@@ -215,7 +216,7 @@ export function CancelPaymentAlertDialog({
           <AlertDialogDescription className="text-right text-xs leading-relaxed">
             سيتم إنشاء قيد عكسي لإلغاء {cancelTarget?.kind === "receipt" ? "تحصيل العميل" : "دفعة المورد"} «
             {cancelTarget?.partyName}» بمبلغ {formatNumber(cancelTarget?.amount ?? 0)}{" "}
-            {!cancelTarget?.currency || cancelTarget.currency === "SDG" ? "ج.س" : cancelTarget.currency} وإعادة الرصيد المتبقي إلى
+            {getCurrencyShortLabel(cancelTarget?.currency)} وإعادة الرصيد المتبقي إلى
             الفواتير المرتبطة.
           </AlertDialogDescription>
         </AlertDialogHeader>

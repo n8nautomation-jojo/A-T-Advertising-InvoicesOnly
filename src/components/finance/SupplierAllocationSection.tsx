@@ -10,12 +10,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { sanitizePositiveDecimal } from "./shared/numericInput";
 import type { AllocationFormRow } from "./shared/allocateFifo";
 
 export interface SupplierInvoiceSummary {
   invoiceId: string;
   reference: string;
+  currency?: string;
   settlement: {
     outstanding: number;
   };
@@ -27,6 +29,7 @@ interface SupplierAllocationSectionProps {
   setRows: React.Dispatch<React.SetStateAction<AllocationFormRow[]>>;
   paymentAmount: number;
   allocatedTotal: number;
+  currencyLabel?: string;
   onAddRow: () => void;
   onAutoAllocate: () => void;
 }
@@ -37,6 +40,7 @@ export function SupplierAllocationSection({
   setRows,
   paymentAmount,
   allocatedTotal,
+  currencyLabel = getCurrencyShortLabel("SDG"),
   onAddRow,
   onAutoAllocate,
 }: SupplierAllocationSectionProps) {
@@ -96,7 +100,8 @@ export function SupplierAllocationSection({
                       {inv.reference}
                     </span>
                     <span className="mx-1.5">·</span>
-                    متبقي {formatNumber(inv.settlement.outstanding)}
+                    متبقي {formatNumber(inv.settlement.outstanding)}{" "}
+                    {inv.currency ? getCurrencyShortLabel(inv.currency) : currencyLabel}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -130,8 +135,8 @@ export function SupplierAllocationSection({
 
       {paymentAmount > 0 && (
         <p className="text-[10px] font-bold text-muted-foreground">
-          المخصَّص: {formatNumber(allocatedTotal)} · غير مخصَّص:{" "}
-          {formatNumber(Math.max(0, paymentAmount - allocatedTotal))}
+          المخصَّص: {formatNumber(allocatedTotal)} {currencyLabel} · غير مخصَّص:{" "}
+          {formatNumber(Math.max(0, paymentAmount - allocatedTotal))} {currencyLabel}
         </p>
       )}
     </div>

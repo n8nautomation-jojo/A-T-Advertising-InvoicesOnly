@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { MaterialKey } from "./printCalculator";
 import { materialLabel } from "./printCalculator";
+import { sanitizeCurrency, type AppCurrency } from "./currency/types";
 
 export type OrderStatus =
   | "new"
@@ -40,6 +41,7 @@ export interface PrintOrder {
   totalArea: number;
   totalCost: number;
   paidAmount: number;
+  currency?: AppCurrency;
   branch: string;
   notes?: string;
   invoiceSerial?: string;
@@ -86,6 +88,7 @@ function sanitizeOrder(raw: any): PrintOrder {
     totalArea: Number(raw.totalArea) || 0,
     totalCost: Number(raw.totalCost) || 0,
     paidAmount: Number(raw.paidAmount) || 0,
+    currency: sanitizeCurrency(raw.currency, "SDG"),
     branch: String(raw.branch || "امدرمان"),
     notes: String(raw.notes || ""),
     invoiceSerial: raw.invoiceSerial ? String(raw.invoiceSerial) : undefined,
@@ -130,6 +133,7 @@ export function useOrders() {
 export function addOrder(newOrder: Omit<PrintOrder, "id" | "createdAt">): PrintOrder {
   const order: PrintOrder = {
     ...newOrder,
+    currency: sanitizeCurrency(newOrder.currency, "SDG"),
     id: `ord-${Date.now()}`,
     createdAt: new Date().toISOString(),
   };

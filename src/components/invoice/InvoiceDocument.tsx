@@ -3,6 +3,8 @@ import { formatNumber } from "@/lib/printCalculator";
 import { CLIENT_TYPES, invoiceTotal, type Invoice, type InvoiceLine } from "@/lib/invoice/types";
 import { getCompanyEmail } from "@/lib/settings/companyProfileStore";
 import { formatBiDiDimensions } from "@/lib/bidiUtils";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { sanitizeCurrency } from "@/lib/currency/types";
 
 // مقاسات ورقة A5 عرضية قياسية بالنسبة 1.414 (210mm × 148mm)
 export const INVOICE_WIDTH = 760; // px
@@ -36,7 +38,7 @@ function InvoiceSheet({
   startIndex: number;
 }) {
   const { meta } = invoice;
-  const currency = invoice.currency || meta.currency || "SDG";
+  const currency = sanitizeCurrency(invoice.currency || meta.currency, "SDG");
   const grandTotal = invoiceTotal(invoice.lines);
   const pageTotal = invoiceTotal(pageLines);
 
@@ -134,7 +136,7 @@ function InvoiceSheet({
               <th style={{ width: 85 }}>الخام</th>
               <th>البيان وتفاصيل العمل</th>
               <th style={{ width: 95 }}>السعر</th>
-              <th style={{ width: 115 }}>القيمة (ج.س)</th>
+              <th style={{ width: 115 }}>القيمة ({getCurrencyShortLabel(currency)})</th>
             </tr>
           </thead>
           <tbody>

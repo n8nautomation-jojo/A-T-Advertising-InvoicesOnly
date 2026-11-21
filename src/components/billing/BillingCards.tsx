@@ -3,22 +3,38 @@ import { FileText, TrendingUp, ShoppingBag } from "lucide-react";
 import type { CustomInvoiceType, CustomInvoice } from "@/lib/billing/types";
 import { formatAccountingNumber } from "./StandardInvoiceDocument";
 import { useProformaInvoices } from "@/lib/proforma/store";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { type AppCurrency, sanitizeCurrency } from "@/lib/currency/types";
 
 interface Props {
   invoices: CustomInvoice[];
   onCreateClick: (type: CustomInvoiceType) => void;
 }
 
+const CURRENCY_ORDER: AppCurrency[] = ["SDG", "USD", "SAR", "EGP"];
+
 interface BillingModuleCard {
   type: CustomInvoiceType;
   title: string;
   description: string;
   count: number;
-  totalAmount: number;
+  totalsByCurrency: Partial<Record<AppCurrency, number>>;
   icon: typeof TrendingUp;
   gradient: string;
   borderGlow: string;
   badgeClass: string;
+}
+
+function groupTotalsByCurrency(
+  items: Array<{ totalAmount?: number; currency?: string; meta?: { currency?: string } }>
+): Partial<Record<AppCurrency, number>> {
+  const totals: Partial<Record<AppCurrency, number>> = {};
+  for (const item of items) {
+    const amount = Number(item?.totalAmount) || 0;
+    const cur = sanitizeCurrency(item?.currency || item?.meta?.currency, "SDG");
+    totals[cur] = Math.round(((totals[cur] || 0) + amount) * 100) / 100;
+  }
+  return totals;
 }
 
 /**
@@ -32,18 +48,12 @@ export function BillingCards({ invoices, onCreateClick }: Props) {
   const salesInvoices = safeInvoices.filter((i) => i?.meta?.type === "sales");
   const purchaseInvoices = safeInvoices.filter((i) => i?.meta?.type === "purchase");
 
-  const sumOfficialProforma = (officialProformas || []).reduce(
-    (acc, i) => acc + (Number(i?.totalAmount) || 0),
-    0
-  );
-  const sumProforma =
-    proformaInvoices.reduce((acc, i) => acc + (Number(i?.totalAmount) || 0), 0) +
-    sumOfficialProforma;
-  const sumSales = salesInvoices.reduce((acc, i) => acc + (Number(i?.totalAmount) || 0), 0);
-  const sumPurchase = purchaseInvoices.reduce(
-    (acc, i) => acc + (Number(i?.totalAmount) || 0),
-    0
-  );
+  const totalsProforma = groupTotalsByCurrency([
+    ...proformaInvoices,
+    ...(officialProformas || []),
+  ]);
+  const totalsSales = groupTotalsByCurrency(salesInvoices);
+  const totalsPurchase = groupTotalsByCurrency(purchaseInvoices);
 
   const CARDS: BillingModuleCard[] = [
     {
@@ -51,7 +61,7 @@ export function BillingCards({ invoices, onCreateClick }: Props) {
       title: "فاتورة مبيعات",
       description: "إصدار فوري A4 للعملاء التجاريين",
       count: salesInvoices.length,
-      totalAmount: sumSales,
+      totalsByCurrency: totalsSales,
       icon: TrendingUp,
       gradient: "from-[#168063] to-[#22A07E]",
       borderGlow: "hover:border-primary/50 hover:shadow-primary/10",
@@ -62,7 +72,7 @@ export function BillingCards({ invoices, onCreateClick }: Props) {
       title: "عرض سعر / مبدئية",
       description: "تسعير ومبدئية وتحويل لمبيعات",
       count: proformaInvoices.length + (officialProformas || []).length,
-      totalAmount: sumProforma,
+      totalsByCurrency: totalsProforma,
       icon: FileText,
       gradient: "from-[#C5A059] to-[#E3C588]",
       borderGlow: "hover:border-[#C5A059]/50 hover:shadow-[#C5A059]/10",
@@ -73,7 +83,7 @@ export function BillingCards({ invoices, onCreateClick }: Props) {
       title: "فاتورة مشتريات",
       description: "تسجيل فواتير ومصروفات الموردين",
       count: purchaseInvoices.length,
-      totalAmount: sumPurchase,
+      totalsByCurrency: totalsPurchase,
       icon: ShoppingBag,
       gradient: "from-slate-700 to-slate-900",
       borderGlow: "hover:border-slate-500/50 hover:shadow-slate-500/10",
@@ -89,6 +99,9 @@ export function BillingCards({ invoices, onCreateClick }: Props) {
     >
       {CARDS.map((card) => {
         const Icon = card.icon;
+        const currencyEntries = CURRENCY_ORDER.map(
+          (cur) => [cur, card.totalsByCurrency[cur] || 0] as const
+        ).filter(([, amt]) => Math.abs(amt) > 0.001);
 
         return (
           <button
@@ -122,10 +135,28 @@ export function BillingCards({ invoices, onCreateClick }: Props) {
                 <span>{card.count}</span>
                 <span className="font-sans text-[8px] sm:text-[9px]">فاتورة</span>
               </span>
-              <span className="hidden sm:inline-block text-[10.5px] font-mono font-bold text-foreground tabular-nums">
-                {formatAccountingNumber(card.totalAmount)}
-                <span className="mr-0.5 font-sans text-[8.5px] text-muted-foreground">ج.س</span>
-              </span>
+              <div className="hidden sm:flex items-center justify-center gap-1 flex-wrap">
+                {currencyEntries.length === 0 ? (
+                  <span className="inline-flex items-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] font-mono font-bold text-foreground tabular-nums">
+                    0
+                    <span className="mr-0.5 font-sans text-[8.5px] text-muted-foreground">
+                      {getCurrencyShortLabel("SDG")}
+                    </span>
+                  </span>
+                ) : (
+                  currencyEntries.map(([cur, amt]) => (
+                    <span
+                      key={cur}
+                      className="inline-flex items-center rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] font-mono font-bold text-foreground tabular-nums"
+                    >
+                      {formatAccountingNumber(amt)}
+                      <span className="mr-0.5 font-sans text-[8.5px] text-muted-foreground">
+                        {getCurrencyShortLabel(cur)}
+                      </span>
+                    </span>
+                  ))
+                )}
+              </div>
             </div>
           </button>
         );

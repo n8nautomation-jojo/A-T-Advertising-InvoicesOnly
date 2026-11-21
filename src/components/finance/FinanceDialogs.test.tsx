@@ -55,9 +55,14 @@ vi.mock("@/lib/customersStore", () => ({
 import { CREATE_SCHEMA_V1 } from "@/lib/database/schema";
 import { runPendingMigrations } from "@/lib/database/migrations";
 import { FixtureDatabase, closeAllFixtures } from "@/test/backup/fixtureDb";
-import { getDefaultAccountId } from "@/lib/repositories/FinancialAccountRepository";
+import { createAccount, getDefaultAccountId } from "@/lib/repositories/FinancialAccountRepository";
 import { getCustomerReceipts, getOpenSalesInvoices } from "@/lib/repositories/LedgerRepository";
+import { createSupplier } from "@/lib/repositories/SupplierRepository";
+import { createExpense } from "@/lib/repositories/ExpenseRepository";
 import { ReceiptDialog } from "./ReceiptDialog";
+import { SupplierPaymentDialog } from "./SupplierPaymentDialog";
+import { ExpenseDialog } from "./ExpenseDialog";
+import { TransferDialog } from "./TransferDialog";
 import { FinancePage } from "./FinancePage";
 
 const NOW = "2026-11-12T08:00:00.000Z";
@@ -80,13 +85,36 @@ function seedCustomer(id: string, name: string) {
   });
 }
 
-function seedSalesInvoice(id: string, reference: string, customerId: string | null, customerName: string, total: number) {
+function seedSalesInvoice(
+  id: string,
+  reference: string,
+  customerId: string | null,
+  customerName: string,
+  total: number,
+  currency: "SDG" | "USD" | "SAR" | "EGP" = "SDG"
+) {
   db.db
     .prepare(
-      `INSERT INTO custom_invoices(id, serial, reference, type, date, customer_id, party_name, total_amount, created_at, updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO custom_invoices(id, serial, reference, type, date, customer_id, party_name, total_amount, currency, created_at, updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`
     )
-    .run(id, reference, reference, "sales", TODAY, customerId, customerName, total, NOW, NOW);
+    .run(id, reference, reference, "sales", TODAY, customerId, customerName, total, currency, NOW, NOW);
+}
+
+function seedPurchaseInvoice(
+  id: string,
+  reference: string,
+  supplierId: string,
+  supplierName: string,
+  total: number,
+  currency: "SDG" | "USD" | "SAR" | "EGP" = "SDG"
+) {
+  db.db
+    .prepare(
+      `INSERT INTO custom_invoices(id, serial, reference, type, date, supplier_id, party_name, total_amount, currency, created_at, updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(id, reference, reference, "purchase", TODAY, supplierId, supplierName, total, currency, NOW, NOW);
 }
 
 beforeEach(async () => {
@@ -292,7 +320,7 @@ describe("ReceiptDialog & FinancePage integration", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/متبقي/i)).toBeInTheDocument();
-      expect(screen.getByText(/ج\.س/)).toBeInTheDocument();
+      expect(screen.getAllByText(/ج\.س/).length).toBeGreaterThan(0);
     });
 
     // توزيع تلقائي للفواتير المفتوحة للعميل (1000 + 500 = 1500)
@@ -308,6 +336,116 @@ describe("ReceiptDialog & FinancePage integration", () => {
     await waitFor(() => {
       expect(onRecorded).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("isolates USD invoices/accounts in ReceiptDialog, warns when no USD account exists, and never renders SDG labels", async () => {
+    seedSalesInvoice("inv-usd-1", "261112S099", "cust-1", "شركة النور", 250, "USD");
+
+    const { unmount } = render(
+      <ReceiptDialog
+        open={true}
+        onOpenChange={() => {}}
+        initialInvoiceId="inv-usd-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/لا يوجد حساب مالي بعملة USD/i)).toBeInTheDocument();
+    });
+
+    // Customer summary must only reflect the USD invoice (250), NOT SDG (1500)
+    await waitFor(() => {
+      expect(screen.getByText(/مفوتر 250/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/ج\.س/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "تسجيل التحصيل" })).toBeDisabled();
+
+    unmount();
+
+    // Now create a USD account and verify submission works cleanly in USD
+    await createAccount({ name: "خزينة الدولار", kind: "cash", currency: "USD" });
+    const onRecorded = vi.fn();
+
+    render(
+      <ReceiptDialog
+        open={true}
+        onOpenChange={() => {}}
+        initialInvoiceId="inv-usd-1"
+        onRecorded={onRecorded}
+      />
+    );
+
+    await waitFor(() => {
+      const btn = screen.getByRole("button", { name: "تسجيل التحصيل" });
+      expect(btn).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "تسجيل التحصيل" }));
+    await waitFor(() => {
+      expect(onRecorded).toHaveBeenCalledTimes(1);
+    });
+
+    const usdReceipts = await getCustomerReceipts(20, "USD");
+    expect(usdReceipts).toHaveLength(1);
+    expect(usdReceipts[0].amount).toBe(250);
+    expect(usdReceipts[0].currency).toBe("USD");
+  });
+
+  it("isolates currency in SupplierPaymentDialog and blocks submit when no matching currency account exists", async () => {
+    const sup = await createSupplier({ name: "مطبعة الشرق" });
+    seedPurchaseInvoice("pur-sdg-1", "261112P001", sup.id, sup.name, 5000, "SDG");
+    seedPurchaseInvoice("pur-usd-1", "261112P002", sup.id, sup.name, 300, "USD");
+
+    render(
+      <SupplierPaymentDialog
+        open={true}
+        onOpenChange={() => {}}
+        initialSupplierId={sup.id}
+        defaultCurrency="USD"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/لا يوجد حساب مالي بعملة USD/i)).toBeInTheDocument();
+      expect(screen.getByText(/إجمالي الالتزام 300 \$/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: "تسجيل الدفعة" })).toBeDisabled();
+  });
+
+  it("blocks cross-currency settlement in ExpenseDialog when no matching currency account exists", async () => {
+    const usdExpense = await createExpense({
+      kind: "operating",
+      beneficiary: "خدمة استضافة",
+      amount: 120,
+      currency: "USD",
+      expenseDate: TODAY,
+    });
+
+    render(
+      <ExpenseDialog
+        open={true}
+        onOpenChange={() => {}}
+        settleExpense={usdExpense}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/لا يوجد حساب مالي بعملة USD/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/مبلغ السداد \(\$\)/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "تسجيل السداد" })).toBeDisabled();
+  });
+
+  it("blocks cross-currency transfers in TransferDialog when accounts do not share the same currency", async () => {
+    await createAccount({ name: "خزينة الدولار", kind: "cash", currency: "USD" });
+
+    render(<TransferDialog open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/يلزم وجود حسابين على الأقل بنفس العملة للتحويل/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "تنفيذ التحويل" })).toBeDisabled();
   });
 });
 

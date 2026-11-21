@@ -16,6 +16,7 @@ import {
   type AccountKind,
 } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { CURRENCY_LIST, type AppCurrency } from "@/lib/currency/types";
 
 interface FinanceAccountsTabProps {
@@ -45,7 +46,7 @@ export function FinanceAccountsTab({
     <div className="space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
         {accounts.map((report) => {
-          const curLabel = !report.account.currency || report.account.currency === "SDG" ? "ج.س" : report.account.currency;
+          const curLabel = getCurrencyShortLabel(report.account.currency);
           return (
             <div
               key={report.account.id}

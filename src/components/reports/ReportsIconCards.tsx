@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/printCalculator";
-import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { DEFAULT_CURRENCY, type AppCurrency } from "@/lib/currency/types";
 
 export type ReportTab =
   | "performance"
@@ -48,7 +49,7 @@ export function ReportsIconCards({
   currency = DEFAULT_CURRENCY,
   metrics,
 }: Props) {
-  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const curLabel = getCurrencyShortLabel(currency);
   const cards: ReportCardItem[] = [
     {
       id: "performance",

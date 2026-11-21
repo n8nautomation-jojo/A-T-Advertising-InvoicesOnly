@@ -6,7 +6,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import type { CustomerRecord } from "@/lib/customersStore";
 import type { Supplier } from "@/lib/repositories/SupplierRepository";
 import type { CustomerStatement, SupplierStatement } from "@/lib/repositories/ReportsRepository";
-import { SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
+import { DEFAULT_CURRENCY, type AppCurrency } from "@/lib/currency/types";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { CurrencySelector } from "@/components/currency/CurrencySelector";
 import { formatNumber } from "@/lib/printCalculator";
 import {
@@ -35,12 +36,12 @@ export function ReportsStatementsView({
   statementSupplierId,
   statement,
   supplierStatement,
-  currency = "SDG",
+  currency = DEFAULT_CURRENCY,
   onCurrencyChange,
   onSelectCustomer,
   onSelectSupplier,
 }: Props) {
-  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const curLabel = getCurrencyShortLabel(currency);
   const activeCustomer = statementCustomerId
     ? customers.find((c) => c.id === statementCustomerId)
     : undefined;
@@ -123,6 +124,8 @@ export function ReportsStatementsView({
         open={Boolean(statementCustomerId)}
         onOpenChange={(open) => !open && onSelectCustomer(null)}
         title={`كشف حساب: ${statement?.customerName ?? ""}`}
+        currency={currency}
+        onCurrencyChange={onCurrencyChange}
         currencyLabel={curLabel}
         lines={statement?.lines ?? []}
         summary={[
@@ -156,6 +159,8 @@ export function ReportsStatementsView({
         open={Boolean(statementSupplierId)}
         onOpenChange={(open) => !open && onSelectSupplier(null)}
         title={`كشف حساب المورد: ${supplierStatement?.supplierName ?? ""}`}
+        currency={currency}
+        onCurrencyChange={onCurrencyChange}
         currencyLabel={curLabel}
         lines={supplierStatement?.lines ?? []}
         summary={[
@@ -173,6 +178,8 @@ function StatementModal({
   open,
   onOpenChange,
   title,
+  currency = DEFAULT_CURRENCY,
+  onCurrencyChange,
   currencyLabel,
   lines,
   summary,
@@ -183,6 +190,8 @@ function StatementModal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
+  currency?: AppCurrency;
+  onCurrencyChange?: (c: AppCurrency) => void;
   currencyLabel: string;
   lines: {
     id: string;
@@ -208,6 +217,19 @@ function StatementModal({
             {title}
           </DialogTitle>
         </DialogHeader>
+
+        {onCurrencyChange && (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-1.5">
+            <span className="text-[11px] font-black text-foreground">عملة الكشف:</span>
+            <CurrencySelector
+              label=""
+              dropdownTitle="اختر عملة كشف الحساب"
+              value={currency}
+              onChange={onCurrencyChange}
+              locale="ar"
+            />
+          </div>
+        )}
 
         {(onPrint || onShare || workspaceLink) && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -290,7 +312,8 @@ function StatementModal({
                       line.debit > 0 ? "text-foreground" : "text-emerald-600 dark:text-emerald-400"
                     )}
                   >
-                    {line.debit > 0 ? `+${formatNumber(line.debit)}` : `-${formatNumber(line.credit)}`}
+                    {line.debit > 0 ? `+${formatNumber(line.debit)}` : `-${formatNumber(line.credit)}`}{" "}
+                    {currencyLabel}
                   </p>
                   <p className="text-[9.5px] text-muted-foreground tabular-nums">
                     رصيد: {formatNumber(line.runningBalance)} {currencyLabel}

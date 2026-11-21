@@ -9,7 +9,8 @@ import { settlementFor, useSettlementVersion } from "@/lib/financeStore";
 import { getExpensesWithSettlement, type ExpenseWithSettlement } from "@/lib/repositories/ExpenseRepository";
 import { getLocalIsoDate } from "@/lib/dateUtils";
 import { formatNumber } from "@/lib/printCalculator";
-import { SUPPORTED_CURRENCIES } from "@/lib/currency/types";
+import { sanitizeCurrency } from "@/lib/currency/types";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { triggerOpenTour } from "@/lib/appTourStore";
 import { getTourSectionFromPath } from "./navConfig";
 import { NotificationPanel, type AppNotificationItem } from "./NotificationPanel";
@@ -80,8 +81,8 @@ export function AppHeader() {
       const st = settlementFor(inv.id, Number(inv.totalAmount) || 0);
       if (st.outstanding <= 0.01) continue;
 
-      const cur = inv.currency || inv.meta.currency || "SDG";
-      const curLabel = cur === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[cur]?.symbol ?? cur;
+      const cur = sanitizeCurrency(inv.currency || inv.meta.currency, "SDG");
+      const curLabel = getCurrencyShortLabel(cur);
       const isOverdue = Boolean(inv.meta.dueDate && inv.meta.dueDate < todayIso);
       list.push({
         id: `inv-${inv.id}`,
@@ -95,8 +96,7 @@ export function AppHeader() {
     }
 
     for (const exp of unpaidExpenses.slice(0, 8)) {
-      const curLabel =
-        exp.currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[exp.currency]?.symbol ?? exp.currency;
+      const curLabel = getCurrencyShortLabel(sanitizeCurrency(exp.currency, "SDG"));
       list.push({
         id: `exp-${exp.id}`,
         severity: "warn",

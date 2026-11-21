@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { ArrowLeftRight, Loader2 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowLeftRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,6 +23,8 @@ import { notifyFinanceUpdated } from "@/lib/financeStore";
 import { getLocalIsoDate } from "@/lib/dateUtils";
 import type { AccountBalanceReport } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { DEFAULT_CURRENCY, sanitizeCurrency } from "@/lib/currency/types";
 import { sanitizePositiveDecimal } from "./shared/numericInput";
 
 interface Props {
@@ -44,6 +46,23 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const fromAccountReport = useMemo(
+    () => accounts.find((r) => r.account.id === fromAccountId) ?? null,
+    [accounts, fromAccountId]
+  );
+  const fromCurrency = sanitizeCurrency(fromAccountReport?.account.currency, DEFAULT_CURRENCY);
+  const fromCurrencyLabel = getCurrencyShortLabel(fromCurrency);
+
+  const destinationAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (a) =>
+          a.account.id !== fromAccountId &&
+          sanitizeCurrency(a.account.currency, DEFAULT_CURRENCY) === fromCurrency
+      ),
+    [accounts, fromAccountId, fromCurrency]
+  );
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -52,8 +71,24 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
         const reports = await getAccountBalances();
         if (cancelled) return;
         setAccounts(reports);
-        setFromAccountId(reports[0]?.account.id ?? "");
-        setToAccountId(reports[1]?.account.id ?? "");
+        const initialFrom =
+          reports.find((r) => {
+            const cur = sanitizeCurrency(r.account.currency, DEFAULT_CURRENCY);
+            return reports.some(
+              (other) =>
+                other.account.id !== r.account.id &&
+                sanitizeCurrency(other.account.currency, DEFAULT_CURRENCY) === cur
+            );
+          }) ?? reports[0];
+        const initialFromId = initialFrom?.account.id ?? "";
+        const initialCur = sanitizeCurrency(initialFrom?.account.currency, DEFAULT_CURRENCY);
+        const initialTo = reports.find(
+          (r) =>
+            r.account.id !== initialFromId &&
+            sanitizeCurrency(r.account.currency, DEFAULT_CURRENCY) === initialCur
+        );
+        setFromAccountId(initialFromId);
+        setToAccountId(initialTo?.account.id ?? "");
         setAmount("");
         setNotes("");
         setOccurredAt(getLocalIsoDate());
@@ -69,6 +104,15 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    setToAccountId((current) =>
+      current && destinationAccounts.some((r) => r.account.id === current)
+        ? current
+        : destinationAccounts[0]?.account.id ?? ""
+    );
+  }, [open, fromAccountId, destinationAccounts]);
+
   const handleSave = async () => {
     const value = Number(amount) || 0;
     if (!fromAccountId || !toAccountId) {
@@ -79,18 +123,21 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
       toast.error("يجب اختيار حسابين مختلفين لإجراء التحويل");
       return;
     }
+    if (!destinationAccounts.some((r) => r.account.id === toAccountId)) {
+      toast.error("يلزم وجود حسابين على الأقل بنفس العملة للتحويل");
+      return;
+    }
     if (!(value > 0)) {
       toast.error("مبلغ التحويل يجب أن يكون أكبر من صفر");
       return;
     }
-    const fromAccount = accounts.find((r) => r.account.id === fromAccountId)?.account;
     setBusy(true);
     try {
       await recordTransfer({
         fromAccountId,
         toAccountId,
         amount: value,
-        currency: fromAccount?.currency,
+        currency: fromCurrency,
         occurredAt,
         notes: notes.trim() || undefined,
       });
@@ -106,6 +153,8 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
   };
 
   const needsTwoAccounts = accounts.length < 2;
+  const noSameCurrencyDestination =
+    !needsTwoAccounts && Boolean(fromAccountId) && destinationAccounts.length === 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -132,7 +181,8 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
                 <SelectContent dir="rtl">
                   {accounts.map((report) => (
                     <SelectItem key={report.account.id} value={report.account.id}>
-                      {report.account.name} ({formatNumber(report.balance)} {report.account.currency || "SDG"})
+                      {report.account.name} ({formatNumber(report.balance)}{" "}
+                      {getCurrencyShortLabel(report.account.currency)})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -141,23 +191,40 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
 
             <div className="space-y-1.5">
               <label className="text-[11px] font-black text-foreground">إلى حساب</label>
-              <Select value={toAccountId} onValueChange={setToAccountId}>
+              <Select
+                value={toAccountId || "__none__"}
+                onValueChange={(v) => setToAccountId(v === "__none__" ? "" : v)}
+                disabled={noSameCurrencyDestination}
+              >
                 <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
-                  <SelectValue />
+                  <SelectValue placeholder="اختر الحساب المستلم" />
                 </SelectTrigger>
                 <SelectContent dir="rtl">
-                  {accounts.map((report) => (
+                  <SelectItem value="__none__">— اختر الحساب —</SelectItem>
+                  {destinationAccounts.map((report) => (
                     <SelectItem key={report.account.id} value={report.account.id}>
-                      {report.account.name} ({formatNumber(report.balance)} {report.account.currency || "SDG"})
+                      {report.account.name} ({formatNumber(report.balance)}{" "}
+                      {getCurrencyShortLabel(report.account.currency)})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
+            {noSameCurrencyDestination && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  يلزم وجود حسابين على الأقل بنفس العملة للتحويل ({fromCurrency} - {fromCurrencyLabel}).
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
-                <label className="text-[11px] font-black text-foreground">المبلغ</label>
+                <label className="text-[11px] font-black text-foreground">
+                  المبلغ ({fromCurrencyLabel})
+                </label>
                 <Input
                   inputMode="decimal"
                   value={amount}
@@ -195,7 +262,7 @@ export function TransferDialog({ open, onOpenChange, onRecorded }: Props) {
           <Button
             type="button"
             onClick={() => void handleSave()}
-            disabled={busy || needsTwoAccounts}
+            disabled={busy || needsTwoAccounts || noSameCurrencyDestination || !toAccountId}
             className="flex-1 h-10 rounded-xl text-xs font-bold"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin me-1" />}

@@ -6,7 +6,8 @@ import type {
 } from "@/lib/repositories/ReportsRepository";
 import { formatNumber } from "@/lib/printCalculator";
 import { cn } from "@/lib/utils";
-import { DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type AppCurrency } from "@/lib/currency/types";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import { DEFAULT_CURRENCY, type AppCurrency } from "@/lib/currency/types";
 
 interface Props {
   type: "sales" | "collections";
@@ -21,7 +22,7 @@ export function ReportsSalesCollectionsView({
   collections,
   currency = DEFAULT_CURRENCY,
 }: Props) {
-  const curLabel = currency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[currency]?.symbol ?? currency;
+  const curLabel = getCurrencyShortLabel(currency);
   const money = (val: number | undefined) => `${formatNumber(Number(val) || 0)} ${curLabel}`;
 
   if (type === "sales") {

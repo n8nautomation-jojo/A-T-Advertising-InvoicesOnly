@@ -14,7 +14,10 @@ import {
   getAllCustomerFinancialSummaries as repoGetAllCustomerFinancialSummaries,
   type CustomerFinancialProfile,
   type CustomerInvoiceItemRow,
+  type CustomerDirectorySummary,
+  type CustomerDirectoryCurrencyBucket,
 } from "./repositories/CustomerRepository";
+import type { AppCurrency } from "./currency/types";
 
 export type CustomerType =
   | "company"
@@ -278,10 +281,17 @@ export async function findOrCreateCustomerByName(input: {
   return { customer: created, created: true, unarchived: false };
 }
 
+export async function getAllCustomerFinancialSummaries(
+  currency?: AppCurrency
+): Promise<Record<string, CustomerDirectorySummary>> {
+  return repoGetAllCustomerFinancialSummaries(currency);
+}
+
 export {
   repoGetCustomerFinancialSummary as getCustomerFinancialSummary,
   repoGetCustomerInvoicesList as getCustomerInvoicesList,
-  repoGetAllCustomerFinancialSummaries as getAllCustomerFinancialSummaries,
   type CustomerFinancialProfile,
   type CustomerInvoiceItemRow,
+  type CustomerDirectorySummary,
+  type CustomerDirectoryCurrencyBucket,
 };

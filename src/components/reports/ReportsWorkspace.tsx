@@ -20,7 +20,7 @@ import {
   type SalesPerformance,
   type SupplierStatement,
 } from "@/lib/repositories/ReportsRepository";
-import type { AppCurrency } from "@/lib/currency/types";
+import { DEFAULT_CURRENCY, isValidCurrency, type AppCurrency } from "@/lib/currency/types";
 
 import { ReportsHeader } from "./ReportsHeader";
 import { ReportsIconCards, type ReportTab } from "./ReportsIconCards";
@@ -35,13 +35,16 @@ export function ReportsWorkspace() {
     tab?: ReportTab;
     customerId?: string;
     supplierId?: string;
+    currency?: AppCurrency;
   };
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ReportTab>(routeSearch?.tab ?? "performance");
-  const [currency, setCurrency] = useState<AppCurrency>("SDG");
+  const [currency, setCurrency] = useState<AppCurrency>(() =>
+    isValidCurrency(routeSearch?.currency) ? routeSearch.currency : DEFAULT_CURRENCY
+  );
 
   const [sales, setSales] = useState<SalesPerformance | null>(null);
   const [collections, setCollections] = useState<CustomerCollectionsReport | null>(null);
@@ -60,6 +63,9 @@ export function ReportsWorkspace() {
 
   useEffect(() => {
     if (routeSearch?.tab) setActiveTab(routeSearch.tab);
+    if (isValidCurrency(routeSearch?.currency)) {
+      setCurrency(routeSearch.currency);
+    }
     if (routeSearch?.customerId) {
       setActiveTab("statements");
       setStatementCustomerId(routeSearch.customerId);
@@ -68,7 +74,7 @@ export function ReportsWorkspace() {
       setActiveTab("statements");
       setStatementSupplierId(routeSearch.supplierId);
     }
-  }, [routeSearch?.tab, routeSearch?.customerId, routeSearch?.supplierId]);
+  }, [routeSearch?.tab, routeSearch?.currency, routeSearch?.customerId, routeSearch?.supplierId]);
 
   const range = useMemo(() => ({ from: from || undefined, to: to || undefined }), [from, to]);
 

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,10 +24,11 @@ import { getAllSuppliers, type Supplier } from "@/lib/repositories/SupplierRepos
 import { createExpense, payExpense, EXPENSE_KIND_LABELS, type Expense, type ExpenseKind } from "@/lib/repositories/ExpenseRepository";
 import { PAYMENT_METHOD_LABELS, type FinancialAccount, type PaymentMethod } from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import {
   CURRENCY_LIST,
   DEFAULT_CURRENCY,
-  SUPPORTED_CURRENCIES,
+  sanitizeCurrency,
   type AppCurrency,
 } from "@/lib/currency/types";
 import { sanitizePositiveDecimal } from "./shared/numericInput";
@@ -67,19 +68,28 @@ export function ExpenseDialog({
   const [notes, setNotes] = useState("");
   const [accountId, setAccountId] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const activeCurrency: AppCurrency = settleExpense?.currency ?? currency;
-  const currencyLabel =
-    activeCurrency === "SDG" ? "ج.س" : SUPPORTED_CURRENCIES[activeCurrency]?.symbol ?? activeCurrency;
-  const matchingAccounts = settleExpense
-    ? accounts.filter((a) => (a.currency ?? "SDG") === settleExpense.currency)
-    : accounts;
-  const selectableAccounts = matchingAccounts.length > 0 ? matchingAccounts : accounts;
+  const activeCurrency: AppCurrency = sanitizeCurrency(
+    settleExpense?.currency ?? currency,
+    DEFAULT_CURRENCY
+  );
+  const currencyLabel = getCurrencyShortLabel(activeCurrency);
+  const matchingAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === activeCurrency
+      ),
+    [accounts, activeCurrency]
+  );
+  const selectableAccounts = matchingAccounts;
+  const noMatchingAccount = isSettlement && !loadingAccounts && selectableAccounts.length === 0;
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    setLoadingAccounts(true);
     void (async () => {
       try {
         let [accountList, supplierList] = await Promise.all([getAllAccounts(), getAllSuppliers()]);
@@ -90,31 +100,36 @@ export function ExpenseDialog({
         if (cancelled) return;
         setAccounts(accountList);
         setSuppliers(supplierList);
-        const preferred = settleExpense
-          ? accountList.filter((a) => (a.currency ?? "SDG") === settleExpense.currency)
-          : accountList;
-        const pool = preferred.length > 0 ? preferred : accountList;
+        const targetCur = sanitizeCurrency(
+          settleExpense?.currency ?? defaultCurrency,
+          DEFAULT_CURRENCY
+        );
+        const preferred = accountList.filter(
+          (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === targetCur
+        );
         setAccountId((current) =>
-          current && pool.some((a) => a.id === current) ? current : pool[0]?.id || ""
+          current && preferred.some((a) => a.id === current) ? current : preferred[0]?.id || ""
         );
       } catch (err) {
         if (!cancelled) {
           console.error("[ExpenseDialog] init failed:", err);
           toast.error("تعذّر تحميل الحسابات والموردين.");
         }
+      } finally {
+        if (!cancelled) setLoadingAccounts(false);
       }
     })();
 
     const today = getLocalIsoDate();
     if (settleExpense) {
       setAmount(String(settleExpense.amount));
-      setCurrency(settleExpense.currency);
+      setCurrency(sanitizeCurrency(settleExpense.currency, DEFAULT_CURRENCY));
       setExpenseDate(today);
       setMethod("cash");
       setNotes("");
     } else {
       setKind("direct");
-      setCurrency(defaultCurrency);
+      setCurrency(sanitizeCurrency(defaultCurrency, DEFAULT_CURRENCY));
       setSupplierId(null);
       setBeneficiary("");
       setCategory("");
@@ -129,14 +144,23 @@ export function ExpenseDialog({
     };
   }, [open, settleExpense, defaultCurrency]);
 
+  useEffect(() => {
+    if (!open || loadingAccounts) return;
+    setAccountId((current) =>
+      current && selectableAccounts.some((a) => a.id === current)
+        ? current
+        : selectableAccounts[0]?.id || ""
+    );
+  }, [open, loadingAccounts, selectableAccounts]);
+
   const handleSave = async () => {
     const value = Number(amount) || 0;
     if (!(value > 0)) {
       toast.error(isSettlement ? "مبلغ السداد يجب أن يكون أكبر من صفر" : "قيمة المصروف يجب أن تكون أكبر من صفر");
       return;
     }
-    if (isSettlement && !accountId) {
-      toast.error("يجب تحديد الحساب المالي");
+    if (isSettlement && (!accountId || !selectableAccounts.some((a) => a.id === accountId))) {
+      toast.error(`يجب تحديد حساب مالي بعملة ${activeCurrency} (${currencyLabel})`);
       return;
     }
 
@@ -206,7 +230,7 @@ export function ExpenseDialog({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-black text-foreground">
-                    مبلغ السداد <span className="text-rose-500">*</span>
+                    مبلغ السداد ({currencyLabel}) <span className="text-rose-500">*</span>
                   </label>
                   <Input
                     inputMode="decimal"
@@ -245,7 +269,11 @@ export function ExpenseDialog({
                   <label className="text-[11px] font-black text-foreground">
                     الحساب المالي <span className="text-rose-500">*</span>
                   </label>
-                  <Select value={accountId || "__none__"} onValueChange={(v) => setAccountId(v === "__none__" ? "" : v)}>
+                  <Select
+                    value={accountId || "__none__"}
+                    onValueChange={(v) => setAccountId(v === "__none__" ? "" : v)}
+                    disabled={noMatchingAccount}
+                  >
                     <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-background text-right">
                       <SelectValue placeholder="اختر الحساب" />
                     </SelectTrigger>
@@ -253,13 +281,21 @@ export function ExpenseDialog({
                       <SelectItem value="__none__">— اختر الحساب —</SelectItem>
                       {selectableAccounts.map((item) => (
                         <SelectItem key={item.id} value={item.id}>
-                          {item.name} ({!item.currency || item.currency === "SDG" ? "ج.س" : item.currency})
+                          {item.name} ({getCurrencyShortLabel(item.currency)})
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+              {noMatchingAccount && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    لا يوجد حساب مالي بعملة {activeCurrency} ({currencyLabel}). يرجى إضافة حساب مالي بهذه العملة من صفحة المالية أولاً لتتمكن من تسجيل السداد.
+                  </span>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black text-foreground">ملاحظات (اختياري)</label>
                 <Input
@@ -310,7 +346,7 @@ export function ExpenseDialog({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-black text-foreground">
-                    المبلغ <span className="text-rose-500">*</span>
+                    المبلغ ({currencyLabel}) <span className="text-rose-500">*</span>
                   </label>
                   <Input
                     inputMode="decimal"
@@ -400,7 +436,12 @@ export function ExpenseDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="flex-1 h-10 rounded-xl text-xs font-bold">
             إلغاء
           </Button>
-          <Button type="button" onClick={() => void handleSave()} disabled={busy} className="flex-1 h-10 rounded-xl text-xs font-bold">
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={busy || noMatchingAccount || (isSettlement && loadingAccounts)}
+            className="flex-1 h-10 rounded-xl text-xs font-bold"
+          >
             {busy && <Loader2 className="h-4 w-4 animate-spin me-1" />}
             {isSettlement ? "تسجيل السداد" : "حفظ المصروف"}
           </Button>

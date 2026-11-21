@@ -15,6 +15,7 @@ import { appendAuditEntry } from "@/lib/repositories/AuditLogRepository";
 import type { CustomerRecord, CustomerType } from "@/lib/customersStore";
 import type { CustomInvoice } from "@/lib/billing/types";
 import { buildSettlement, type SettlementSummary } from "@/lib/domain/finance";
+import { sanitizeCurrency, type AppCurrency } from "@/lib/currency/types";
 
 function round2(v: number): number {
   return Math.round((Number(v) || 0) * 100) / 100;
@@ -34,7 +35,7 @@ export function rowToCustomer(row: any): CustomerRecord {
     createdAt: String(row.created_at || new Date().toISOString()),
     isArchived: Boolean(row.is_archived === 1 || row.is_archived === true),
     openingBalance: Number(row.opening_balance) || 0,
-    openingBalanceCurrency: row.opening_balance_currency || "SDG",
+    openingBalanceCurrency: sanitizeCurrency(row.opening_balance_currency, "SDG"),
     openingBalanceDate: row.opening_balance_date || undefined,
     openingBalanceType: (row.opening_balance_type as "debit" | "credit") || "debit",
     openingBalanceNotes: row.opening_balance_notes || undefined,
@@ -61,7 +62,7 @@ export async function upsertCustomer(customer: CustomerRecord): Promise<void> {
   const db = await getDb();
   const isArchivedInt = customer.isArchived ? 1 : 0;
   const openingBalance = Number(customer.openingBalance) || 0;
-  const openingBalCurrency = customer.openingBalanceCurrency || "SDG";
+  const openingBalCurrency = sanitizeCurrency(customer.openingBalanceCurrency, "SDG");
   const openingBalDate = customer.openingBalanceDate || null;
   const openingBalType = customer.openingBalanceType || "debit";
   const openingBalNotes = customer.openingBalanceNotes || null;
@@ -357,14 +358,19 @@ export async function getCustomerFinancialSummary(customerId: string): Promise<C
   );
   const payments = paymentsRes.values || [];
 
-  // 3. Group by currency
-  const currenciesSet = new Set<string>(["SDG"]);
-  if (customer?.openingBalanceCurrency) currenciesSet.add(customer.openingBalanceCurrency);
+  // 3. Group by currency — never force an empty SDG tab when another currency has activity
+  const currenciesSet = new Set<AppCurrency>();
+  if (customer && Math.abs(Number(customer.openingBalance) || 0) > 0.009) {
+    currenciesSet.add(sanitizeCurrency(customer.openingBalanceCurrency, "SDG"));
+  }
   for (const inv of invoices) {
-    if (inv.currency) currenciesSet.add(String(inv.currency));
+    currenciesSet.add(sanitizeCurrency(inv.currency, "SDG"));
   }
   for (const pay of payments) {
-    if (pay.currency) currenciesSet.add(String(pay.currency));
+    currenciesSet.add(sanitizeCurrency(pay.currency, "SDG"));
+  }
+  if (currenciesSet.size === 0) {
+    currenciesSet.add(sanitizeCurrency(customer?.openingBalanceCurrency, "SDG"));
   }
 
   const summariesByCurrency: Record<string, CurrencyFinancialSummary> = {};
@@ -379,7 +385,7 @@ export async function getCustomerFinancialSummary(customerId: string): Promise<C
     let unpaidInvoicesCount = 0;
     let overdueInvoicesCount = 0;
 
-    const curInvoices = invoices.filter((i) => (i.currency || "SDG") === cur);
+    const curInvoices = invoices.filter((i) => sanitizeCurrency(i.currency, "SDG") === cur);
     for (const inv of curInvoices) {
       const invTotal = Number(inv.total_amount) || 0;
       const invPaid = Number(inv.paid) || 0;
@@ -404,7 +410,7 @@ export async function getCustomerFinancialSummary(customerId: string): Promise<C
       }
     }
 
-    const curPayments = payments.filter((p) => (p.currency || "SDG") === cur);
+    const curPayments = payments.filter((p) => sanitizeCurrency(p.currency, "SDG") === cur);
     let totalPaymentsAmount = 0;
     let totalAllocatedAmount = 0;
     for (const pay of curPayments) {
@@ -419,7 +425,7 @@ export async function getCustomerFinancialSummary(customerId: string): Promise<C
     // Opening balance contribution
     let openingDebit = 0;
     let openingCredit = 0;
-    if (customer && (customer.openingBalanceCurrency || "SDG") === cur && customer.openingBalance) {
+    if (customer && sanitizeCurrency(customer.openingBalanceCurrency, "SDG") === cur && customer.openingBalance) {
       if (customer.openingBalanceType === "credit") {
         openingCredit = customer.openingBalance;
       } else {
@@ -447,20 +453,42 @@ export async function getCustomerFinancialSummary(customerId: string): Promise<C
     };
   }
 
-  // Determine overall status across currencies
+  // Pick primaryCurrency strictly from active currency buckets
+  const summaryValues = Object.values(summariesByCurrency);
+  const preferredOpeningCur = customer?.openingBalanceCurrency
+    ? sanitizeCurrency(customer.openingBalanceCurrency, "SDG")
+    : undefined;
+  const openingSummary = preferredOpeningCur ? summariesByCurrency[preferredOpeningCur] : undefined;
+  const hasOpeningCurActivity = Boolean(
+    openingSummary &&
+      (openingSummary.totalInvoiced > 0 ||
+        openingSummary.totalPaid > 0 ||
+        openingSummary.outstanding > 0 ||
+        openingSummary.advanceCredit > 0)
+  );
+
+  const primaryCurrency: AppCurrency =
+    (hasOpeningCurActivity && preferredOpeningCur ? preferredOpeningCur : undefined) ??
+    (summaryValues.find((s) => s.outstanding > 0.009)?.currency as AppCurrency | undefined) ??
+    (summaryValues.find((s) => s.totalInvoicesCount > 0)?.currency as AppCurrency | undefined) ??
+    (summaryValues.find((s) => s.totalPaid > 0.009)?.currency as AppCurrency | undefined) ??
+    (Object.keys(summariesByCurrency)[0] as AppCurrency | undefined) ??
+    sanitizeCurrency(customer?.openingBalanceCurrency, "SDG");
+
+  // Determine overall status across currencies (flags only — never sum amounts across currencies)
   let hasOverdue = false;
   let hasOutstanding = false;
   let hasCredit = false;
-  let totalPaidAllCurrencies = 0;
-  let totalOutstandingAllCurrencies = 0;
 
-  for (const s of Object.values(summariesByCurrency)) {
+  for (const s of summaryValues) {
     if (s.overdueInvoicesCount > 0) hasOverdue = true;
     if (s.outstanding > 0.009) hasOutstanding = true;
     if (s.advanceCredit > 0.009) hasCredit = true;
-    totalPaidAllCurrencies += s.totalPaid;
-    totalOutstandingAllCurrencies += s.outstanding;
   }
+
+  const primarySummary = summariesByCurrency[primaryCurrency];
+  const totalPaidAllCurrencies = primarySummary?.totalPaid ?? 0;
+  const totalOutstandingAllCurrencies = primarySummary?.outstanding ?? 0;
 
   let status: CustomerFinancialProfile["status"] = "regular";
   let statusLabel = "عميل منتظم";
@@ -488,7 +516,7 @@ export async function getCustomerFinancialSummary(customerId: string): Promise<C
     customerId,
     customerName,
     summariesByCurrency,
-    primaryCurrency: customer?.openingBalanceCurrency || "SDG",
+    primaryCurrency,
     status,
     statusLabel,
     statusColor,
@@ -516,29 +544,40 @@ export interface CustomerInvoiceItemRow {
   notes?: string;
 }
 
+export interface CustomerDirectoryCurrencyBucket {
+  currency: AppCurrency;
+  invoiced: number;
+  collected: number;
+  outstanding: number;
+  overdueCount: number;
+}
+
+export interface CustomerDirectorySummary {
+  outstanding: number;
+  invoiced: number;
+  collected: number;
+  overdueCount: number;
+  primaryCurrency: AppCurrency;
+  byCurrency: Partial<Record<AppCurrency, CustomerDirectoryCurrencyBucket>>;
+}
+
 /**
  * Batched, high-performance aggregation of financial figures for all customers
- * (PRD & Customer Module): enables zero-latency lists without N+1 roundtrips.
+ * (PRD & Customer Module): enables zero-latency lists without N+1 roundtrips,
+ * with strict per-currency isolation (never summing amounts across currencies).
  */
-export async function getAllCustomerFinancialSummaries(): Promise<
-  Record<
-    string,
-    {
-      outstanding: number;
-      invoiced: number;
-      collected: number;
-      overdueCount: number;
-    }
-  >
-> {
+export async function getAllCustomerFinancialSummaries(
+  filterCurrency?: AppCurrency
+): Promise<Record<string, CustomerDirectorySummary>> {
   const db = await getDb();
   const today = getLocalIsoDate();
 
   const invRes = await db.query(
     `SELECT i.customer_id,
+            COALESCE(i.currency, 'SDG') AS currency,
             COALESCE(SUM(i.total_amount), 0) AS total_invoiced,
             COALESCE(SUM(COALESCE(paid_agg.paid, 0)), 0) AS total_paid,
-            COALESCE(SUM(CASE WHEN (i.total_amount - COALESCE(paid_agg.paid, 0)) > 0.009 AND COALESCE(i.due_date, i.date) < ? THEN 1 ELSE 0 END), 0) AS overdue_count
+            COALESCE(SUM(CASE WHEN (i.total_amount - COALESCE(paid_agg.paid, 0)) > 0.009 AND COALESCE(NULLIF(TRIM(i.due_date), ''), NULLIF(TRIM(i.date), '')) < ? THEN 1 ELSE 0 END), 0) AS overdue_count
        FROM custom_invoices i
        LEFT JOIN (
          SELECT a.invoice_id, SUM(a.amount) AS paid
@@ -548,26 +587,39 @@ export async function getAllCustomerFinancialSummaries(): Promise<
           GROUP BY a.invoice_id
        ) paid_agg ON paid_agg.invoice_id = i.id
       WHERE i.type = 'sales' AND i.cancelled_at IS NULL AND i.customer_id IS NOT NULL
-      GROUP BY i.customer_id`,
+      GROUP BY i.customer_id, COALESCE(i.currency, 'SDG')`,
     [today]
   );
 
   const payRes = await db.query(
-    `SELECT customer_id, COALESCE(SUM(amount), 0) AS total_collected
+    `SELECT customer_id,
+            COALESCE(currency, 'SDG') AS currency,
+            COALESCE(SUM(amount), 0) AS total_collected
        FROM customer_payments
       WHERE cancelled_at IS NULL
-      GROUP BY customer_id`
+      GROUP BY customer_id, COALESCE(currency, 'SDG')`
   );
 
-  const payMap = new Map<string, number>();
+  const payMapByCid = new Map<string, Map<AppCurrency, number>>();
   for (const r of payRes.values || []) {
-    if (r.customer_id) payMap.set(String(r.customer_id), Number(r.total_collected) || 0);
+    if (!r.customer_id) continue;
+    const cid = String(r.customer_id);
+    const cur = sanitizeCurrency(r.currency, "SDG");
+    let curMap = payMapByCid.get(cid);
+    if (!curMap) {
+      curMap = new Map<AppCurrency, number>();
+      payMapByCid.set(cid, curMap);
+    }
+    curMap.set(cur, (curMap.get(cur) || 0) + (Number(r.total_collected) || 0));
   }
 
   const custRes = await db.query(
-    "SELECT id, name, opening_balance, opening_balance_type FROM customers"
+    `SELECT id, name, opening_balance, opening_balance_type,
+            COALESCE(opening_balance_currency, 'SDG') AS opening_balance_currency
+       FROM customers`
   );
-  const custMap = new Map<string, { opening: number; type: string }>();
+  const custOpeningMap = new Map<string, { opening: number; type: string; currency: AppCurrency }>();
+  const custOpeningCurrency = new Map<string, AppCurrency>();
   const nameToCustomerId = new Map<string, string>();
   for (const c of custRes.values || []) {
     const cid = c.id ? String(c.id) : "";
@@ -576,13 +628,22 @@ export async function getAllCustomerFinancialSummaries(): Promise<
     if (norm && !nameToCustomerId.has(norm)) {
       nameToCustomerId.set(norm, cid);
     }
-    if (c.opening_balance) {
-      custMap.set(cid, { opening: Number(c.opening_balance) || 0, type: String(c.opening_balance_type || "debit") });
+    const opCur = sanitizeCurrency(c.opening_balance_currency, "SDG");
+    custOpeningCurrency.set(cid, opCur);
+    const opAmt = Number(c.opening_balance) || 0;
+    if (Math.abs(opAmt) > 0.009) {
+      custOpeningMap.set(cid, {
+        opening: opAmt,
+        type: String(c.opening_balance_type || "debit"),
+        currency: opCur,
+      });
     }
   }
 
   const unlinkedInvRes = await db.query(
-    `SELECT i.party_name, i.total_amount, i.date, i.due_date,
+    `SELECT i.party_name,
+            COALESCE(i.currency, 'SDG') AS currency,
+            i.total_amount, i.date, i.due_date,
             COALESCE(paid_agg.paid, 0) AS paid
        FROM custom_invoices i
        LEFT JOIN (
@@ -596,10 +657,33 @@ export async function getAllCustomerFinancialSummaries(): Promise<
         AND TRIM(COALESCE(i.party_name, '')) <> ''`
   );
 
-  const invAggByCid = new Map<string, { invoiced: number; paid: number; overdueCount: number }>();
+  const invAggByCid = new Map<
+    string,
+    Map<AppCurrency, { invoiced: number; paid: number; overdueCount: number }>
+  >();
+
+  const addInvAgg = (
+    cid: string,
+    cur: AppCurrency,
+    delta: { invoiced: number; paid: number; overdueCount: number }
+  ) => {
+    let curMap = invAggByCid.get(cid);
+    if (!curMap) {
+      curMap = new Map();
+      invAggByCid.set(cid, curMap);
+    }
+    const prev = curMap.get(cur) ?? { invoiced: 0, paid: 0, overdueCount: 0 };
+    curMap.set(cur, {
+      invoiced: prev.invoiced + delta.invoiced,
+      paid: prev.paid + delta.paid,
+      overdueCount: prev.overdueCount + delta.overdueCount,
+    });
+  };
+
   for (const r of invRes.values || []) {
     const cid = String(r.customer_id);
-    invAggByCid.set(cid, {
+    const cur = sanitizeCurrency(r.currency, "SDG");
+    addInvAgg(cid, cur, {
       invoiced: Number(r.total_invoiced) || 0,
       paid: Number(r.total_paid) || 0,
       overdueCount: Number(r.overdue_count) || 0,
@@ -609,50 +693,97 @@ export async function getAllCustomerFinancialSummaries(): Promise<
   for (const r of unlinkedInvRes.values || []) {
     const cid = nameToCustomerId.get(normalizeCustomerName(String(r.party_name || "")));
     if (!cid) continue;
-    const prev = invAggByCid.get(cid) ?? { invoiced: 0, paid: 0, overdueCount: 0 };
+    const cur = sanitizeCurrency(r.currency, "SDG");
     const total = Number(r.total_amount) || 0;
     const paid = Number(r.paid) || 0;
     const isOverdue = total - paid > 0.009 && String(r.due_date || r.date || "") < today;
-    invAggByCid.set(cid, {
-      invoiced: prev.invoiced + total,
-      paid: prev.paid + paid,
-      overdueCount: prev.overdueCount + (isOverdue ? 1 : 0),
+    addInvAgg(cid, cur, {
+      invoiced: total,
+      paid,
+      overdueCount: isOverdue ? 1 : 0,
     });
   }
 
-  const map: Record<string, { outstanding: number; invoiced: number; collected: number; overdueCount: number }> = {};
+  const allCustomerIds = new Set<string>([
+    ...custOpeningMap.keys(),
+    ...payMapByCid.keys(),
+    ...invAggByCid.keys(),
+  ]);
 
-  for (const [cid, agg] of invAggByCid.entries()) {
-    const invoiced = agg.invoiced;
-    const paid = agg.paid;
-    const collected = Math.max(payMap.get(cid) || 0, paid);
-    const op = custMap.get(cid);
-    const opDebit = op && op.type === "debit" ? op.opening : 0;
-    const opCredit = op && op.type === "credit" ? op.opening : 0;
+  const map: Record<string, CustomerDirectorySummary> = {};
 
-    const outstanding = Math.max(0, invoiced + opDebit - collected - opCredit);
-    map[cid] = {
-      invoiced: round2(invoiced + opDebit),
-      collected: round2(collected + opCredit),
-      outstanding: round2(outstanding),
-      overdueCount: agg.overdueCount,
-    };
-  }
+  for (const cid of allCustomerIds) {
+    const invCurMap = invAggByCid.get(cid);
+    const payCurMap = payMapByCid.get(cid);
+    const op = custOpeningMap.get(cid);
 
-  const extraCustomerIds = new Set<string>([...custMap.keys(), ...payMap.keys(), ...invAggByCid.keys()]);
-  for (const cid of extraCustomerIds) {
-    if (!map[cid]) {
-      const op = custMap.get(cid);
-      const collected = payMap.get(cid) || 0;
-      const opDebit = op && op.type === "debit" ? op.opening : 0;
-      const opCredit = op && op.type === "credit" ? op.opening : 0;
-      map[cid] = {
-        invoiced: round2(opDebit),
+    const activeCurrencies = new Set<AppCurrency>();
+    if (invCurMap) {
+      for (const cur of invCurMap.keys()) activeCurrencies.add(cur);
+    }
+    if (payCurMap) {
+      for (const cur of payCurMap.keys()) activeCurrencies.add(cur);
+    }
+    if (op) {
+      activeCurrencies.add(op.currency);
+    }
+
+    const byCurrency: Partial<Record<AppCurrency, CustomerDirectoryCurrencyBucket>> = {};
+    for (const cur of activeCurrencies) {
+      const invAgg = invCurMap?.get(cur);
+      const invoiced = invAgg?.invoiced ?? 0;
+      const allocatedPaid = invAgg?.paid ?? 0;
+      const overdueCount = invAgg?.overdueCount ?? 0;
+      const collected = Math.max(payCurMap?.get(cur) || 0, allocatedPaid);
+
+      const opApplies = op && op.currency === cur;
+      const opDebit = opApplies && op.type !== "credit" ? op.opening : 0;
+      const opCredit = opApplies && op.type === "credit" ? op.opening : 0;
+
+      const outstanding = Math.max(0, invoiced + opDebit - collected - opCredit);
+      byCurrency[cur] = {
+        currency: cur,
+        invoiced: round2(invoiced + opDebit),
         collected: round2(collected + opCredit),
-        outstanding: round2(Math.max(0, opDebit - collected - opCredit)),
-        overdueCount: 0,
+        outstanding: round2(outstanding),
+        overdueCount,
       };
     }
+
+    const openingCur = custOpeningCurrency.get(cid) ?? "SDG";
+    const buckets = Object.values(byCurrency).filter(
+      (b): b is CustomerDirectoryCurrencyBucket => Boolean(b)
+    );
+
+    let primaryCurrency: AppCurrency;
+    if (filterCurrency) {
+      primaryCurrency = sanitizeCurrency(filterCurrency);
+    } else {
+      const openingBucket = byCurrency[openingCur];
+      const outstandingBucket =
+        (openingBucket && openingBucket.outstanding > 0.009 ? openingBucket : undefined) ??
+        buckets.find((b) => b.outstanding > 0.009);
+      const activeBucket =
+        (openingBucket && (openingBucket.invoiced > 0.009 || openingBucket.collected > 0.009)
+          ? openingBucket
+          : undefined) ??
+        buckets.find((b) => b.invoiced > 0.009 || b.collected > 0.009);
+      primaryCurrency =
+        outstandingBucket?.currency ??
+        activeBucket?.currency ??
+        buckets[0]?.currency ??
+        openingCur;
+    }
+
+    const primaryBucket = byCurrency[primaryCurrency];
+    map[cid] = {
+      invoiced: primaryBucket?.invoiced ?? 0,
+      collected: primaryBucket?.collected ?? 0,
+      outstanding: primaryBucket?.outstanding ?? 0,
+      overdueCount: primaryBucket?.overdueCount ?? 0,
+      primaryCurrency,
+      byCurrency,
+    };
   }
 
   return map;
@@ -725,7 +856,7 @@ export async function getCustomerInvoicesList(customerId: string): Promise<Custo
       totalAmount: round2(total),
       paidAmount: round2(paid),
       remainingAmount: round2(remaining),
-      currency: String(row.currency || "SDG"),
+      currency: sanitizeCurrency(row.currency, "SDG"),
       status,
       statusLabel,
       statusBadgeColor,

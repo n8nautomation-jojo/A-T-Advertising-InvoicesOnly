@@ -68,6 +68,7 @@ export const INVOICES_FILTER_TABS: InvoicesFilterTab[] = [
 export interface InvoicesStats {
   totalCount: number;
   totalAmount: number;
+  totalsByCurrency: Partial<Record<AppCurrency, number>>;
   customCount: number;
   calcCount: number;
   proformaCount: number;

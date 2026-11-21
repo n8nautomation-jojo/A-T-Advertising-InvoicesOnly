@@ -98,13 +98,47 @@ export async function updateSupplier(
 }
 
 export async function cancelSupplier(id: string, reason: string | null, nowIso = new Date().toISOString()): Promise<void> {
-  const account = await getSupplierAccount(id);
-  if (account.outstanding > 0.009) {
-    throw new Error(
-      `لا يمكن إلغاء المورد «${account.supplier.name}» لوجود التزامات غير مسدّدة بقيمة (${account.outstanding}).`
-    );
-  }
   const db = await getDb();
+  const [supplier, invRes, payRes] = await Promise.all([
+    getSupplierById(id),
+    db.query(
+      `SELECT COALESCE(currency, 'SDG') AS currency, COALESCE(SUM(total_amount), 0) AS total
+         FROM custom_invoices
+        WHERE supplier_id = ? AND type = 'purchase' AND cancelled_at IS NULL
+        GROUP BY COALESCE(currency, 'SDG')`,
+      [id]
+    ),
+    db.query(
+      `SELECT COALESCE(currency, 'SDG') AS currency, COALESCE(SUM(amount), 0) AS paid
+         FROM supplier_payments
+        WHERE supplier_id = ? AND cancelled_at IS NULL
+        GROUP BY COALESCE(currency, 'SDG')`,
+      [id]
+    ),
+  ]);
+
+  const invByCur = new Map<AppCurrency, number>();
+  for (const row of invRes.values ?? []) {
+    const cur = sanitizeCurrency(row.currency, "SDG");
+    invByCur.set(cur, (invByCur.get(cur) ?? 0) + (Number(row.total) || 0));
+  }
+  const payByCur = new Map<AppCurrency, number>();
+  for (const row of payRes.values ?? []) {
+    const cur = sanitizeCurrency(row.currency, "SDG");
+    payByCur.set(cur, (payByCur.get(cur) ?? 0) + (Number(row.paid) || 0));
+  }
+
+  for (const [cur, total] of invByCur.entries()) {
+    const paid = payByCur.get(cur) ?? 0;
+    const outstanding = Math.round(Math.max(0, total - paid) * 100) / 100;
+    if (outstanding > 0.009) {
+      const supplierName = supplier?.name ?? "مورد غير معروف";
+      throw new Error(
+        `لا يمكن إلغاء المورد «${supplierName}» لوجود التزامات غير مسدّدة بقيمة (${outstanding} ${cur}).`
+      );
+    }
+  }
+
   await db.run("UPDATE suppliers SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL", [nowIso, id]);
   await appendAuditEntry({ entityType: "supplier", entityId: id, action: "cancel", reason, nowIso });
   notifyDataChanged();

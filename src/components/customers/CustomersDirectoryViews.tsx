@@ -10,19 +10,128 @@ import { Button } from "@/components/ui/button";
 import {
   CUSTOMER_TYPE_CONFIG,
   type CustomerRecord,
+  type CustomerDirectorySummary,
+  type CustomerDirectoryCurrencyBucket,
 } from "@/lib/customersStore";
 import { formatNumber } from "@/lib/printCalculator";
 import { playTapSound } from "@/lib/soundEffects";
+import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
+import {
+  SUPPORTED_CURRENCIES,
+  sanitizeCurrency,
+  type AppCurrency,
+} from "@/lib/currency/types";
 
-export type LiveBalancesMap = Record<
-  string,
-  { outstanding: number; invoiced: number; collected: number; overdueCount: number }
->;
+export type LiveCustomerBalance = Omit<
+  CustomerDirectorySummary,
+  "primaryCurrency" | "byCurrency"
+> &
+  Partial<Pick<CustomerDirectorySummary, "primaryCurrency" | "byCurrency">>;
+
+export type LiveBalancesMap = Record<string, LiveCustomerBalance>;
+
+const CURRENCY_ORDER = Object.keys(SUPPORTED_CURRENCIES) as AppCurrency[];
+
+export function getCustomerCurrencyBuckets(
+  customer: CustomerRecord,
+  live?: LiveCustomerBalance,
+  selectedCurrency: "ALL" | AppCurrency = "ALL"
+): CustomerDirectoryCurrencyBucket[] {
+  const fallbackCurrency = sanitizeCurrency(
+    live?.primaryCurrency ?? customer.openingBalanceCurrency,
+    "SDG"
+  );
+
+  if (live?.byCurrency) {
+    const definedEntries = CURRENCY_ORDER
+      .map((code) => live.byCurrency?.[code])
+      .filter((b): b is CustomerDirectoryCurrencyBucket => Boolean(b));
+
+    if (definedEntries.length > 0) {
+      if (selectedCurrency !== "ALL") {
+        const match = live.byCurrency[selectedCurrency];
+        return [
+          match ?? {
+            currency: selectedCurrency,
+            invoiced: 0,
+            collected: 0,
+            outstanding: 0,
+            overdueCount: 0,
+          },
+        ];
+      }
+
+      const active = definedEntries.filter(
+        (b) => b.invoiced > 0.009 || b.outstanding > 0.009 || b.collected > 0.009
+      );
+      if (active.length > 0) {
+        return active;
+      }
+
+      return [
+        {
+          currency: fallbackCurrency,
+          invoiced: 0,
+          collected: 0,
+          outstanding: 0,
+          overdueCount: 0,
+        },
+      ];
+    }
+  }
+
+  if (live) {
+    if (selectedCurrency !== "ALL" && selectedCurrency !== fallbackCurrency) {
+      return [
+        {
+          currency: selectedCurrency,
+          invoiced: 0,
+          collected: 0,
+          outstanding: 0,
+          overdueCount: 0,
+        },
+      ];
+    }
+    return [
+      {
+        currency: fallbackCurrency,
+        invoiced: live.invoiced || 0,
+        collected: live.collected || 0,
+        outstanding: live.outstanding || 0,
+        overdueCount: live.overdueCount || 0,
+      },
+    ];
+  }
+
+  const openingCur = sanitizeCurrency(customer.openingBalanceCurrency, "SDG");
+  if (selectedCurrency !== "ALL" && selectedCurrency !== openingCur) {
+    return [
+      {
+        currency: selectedCurrency,
+        invoiced: 0,
+        collected: 0,
+        outstanding: 0,
+        overdueCount: 0,
+      },
+    ];
+  }
+
+  return [
+    {
+      currency: openingCur,
+      invoiced: customer.totalSpent || 0,
+      collected: 0,
+      outstanding: customer.balance > 0 ? customer.balance : 0,
+      overdueCount: 0,
+    },
+  ];
+}
 
 interface CustomersDirectoryViewProps {
   totalMatchedCount: number;
   visibleCustomers: CustomerRecord[];
   liveBalances: LiveBalancesMap;
+  selectedCurrency?: "ALL" | AppCurrency;
   onOpenProfile: (customer: CustomerRecord) => void;
   onCreateInvoice: (customer: CustomerRecord) => void;
   onEditCustomer: (customer: CustomerRecord) => void;
@@ -33,6 +142,7 @@ export function CustomersDirectoryTable({
   totalMatchedCount,
   visibleCustomers,
   liveBalances,
+  selectedCurrency = "ALL",
   onOpenProfile,
   onCreateInvoice,
   onEditCustomer,
@@ -62,9 +172,12 @@ export function CustomersDirectoryTable({
               {visibleCustomers.map((c) => {
                 const cfg = CUSTOMER_TYPE_CONFIG[c.type] || CUSTOMER_TYPE_CONFIG.individual;
                 const live = liveBalances[c.id];
-                const totalInvoiced = live ? live.invoiced : c.totalSpent || 0;
-                const outstanding = live ? live.outstanding : (c.balance > 0 ? c.balance : 0);
-                const hasOverdue = live && live.overdueCount > 0;
+                const buckets = getCustomerCurrencyBuckets(c, live, selectedCurrency);
+                const outstandingBuckets = buckets.filter((b) => b.outstanding > 0.009);
+                const hasOverdue =
+                  selectedCurrency === "ALL"
+                    ? buckets.some((b) => b.overdueCount > 0) || Boolean(live && live.overdueCount > 0)
+                    : buckets.some((b) => b.overdueCount > 0);
 
                 return (
                   <tr
@@ -119,14 +232,42 @@ export function CustomersDirectoryTable({
                       {c.address || "—"}
                     </td>
                     <td className="py-3 px-3 font-mono font-black text-foreground tabular-nums">
-                      {formatNumber(totalInvoiced)}{" "}
-                      <span className="text-[10px] text-muted-foreground font-normal">ج.س</span>
+                      <div className="flex flex-col gap-1 items-start">
+                        {buckets.map((b) => (
+                          <div
+                            key={b.currency}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-secondary/35 px-2 py-0.5 leading-tight whitespace-nowrap"
+                          >
+                            <span className="text-[9.5px] font-black text-primary/90">
+                              {b.currency}
+                            </span>
+                            <span>
+                              {formatNumber(b.invoiced)}{" "}
+                              <span className="text-[10px] text-muted-foreground font-normal">
+                                {getCurrencyShortLabel(b.currency)}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </td>
                     <td className="py-3 px-3 font-mono font-black tabular-nums">
-                      {outstanding > 0.009 ? (
-                        <span className="text-rose-600 dark:text-rose-400 font-black">
-                          {formatNumber(outstanding)} ج.س عليه
-                        </span>
+                      {outstandingBuckets.length > 0 ? (
+                        <div className="flex flex-col gap-1 items-start">
+                          {outstandingBuckets.map((b) => (
+                            <div
+                              key={b.currency}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-2 py-0.5 text-rose-600 dark:text-rose-400 font-black leading-tight whitespace-nowrap"
+                            >
+                              <span className="text-[9.5px] font-black opacity-80">
+                                {b.currency}
+                              </span>
+                              <span>
+                                {formatNumber(b.outstanding)} {getCurrencyShortLabel(b.currency)} عليه
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       ) : (
                         <span className="text-emerald-600 font-bold text-xs">
                           متزن (0)
@@ -199,6 +340,7 @@ export function CustomersMobileCards({
   totalMatchedCount,
   visibleCustomers,
   liveBalances,
+  selectedCurrency = "ALL",
   onOpenProfile,
   onCreateInvoice,
   onEditCustomer,
@@ -214,8 +356,8 @@ export function CustomersMobileCards({
         visibleCustomers.map((c) => {
           const cfg = CUSTOMER_TYPE_CONFIG[c.type] || CUSTOMER_TYPE_CONFIG.individual;
           const live = liveBalances[c.id];
-          const totalInvoiced = live ? live.invoiced : c.totalSpent || 0;
-          const outstanding = live ? live.outstanding : (c.balance > 0 ? c.balance : 0);
+          const buckets = getCustomerCurrencyBuckets(c, live, selectedCurrency);
+          const outstandingBuckets = buckets.filter((b) => b.outstanding > 0.009);
 
           return (
             <div
@@ -245,25 +387,63 @@ export function CustomersMobileCards({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-xl border border-border/60 bg-secondary/30 p-2">
-                  <span className="text-[10px] text-muted-foreground font-bold block">إجمالي الفواتير</span>
-                  <p className="font-mono font-bold text-foreground tabular-nums mt-0.5">
-                    {formatNumber(totalInvoiced)} ج.س
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border/60 bg-secondary/30 p-2">
-                  <span className="text-[10px] text-muted-foreground font-bold block">الرصيد / المستحق</span>
-                  <p className="font-mono font-black tabular-nums mt-0.5">
-                    {outstanding > 0.009 ? (
-                      <span className="text-rose-600 dark:text-rose-400">
-                        {formatNumber(outstanding)} ج.س عليه
-                      </span>
-                    ) : (
-                      <span className="text-emerald-600">متزن (0)</span>
-                    )}
-                  </p>
-                </div>
+              <div className="space-y-2 text-xs">
+                {buckets.map((b) => {
+                  const conf = SUPPORTED_CURRENCIES[b.currency];
+                  const curLabel = getCurrencyShortLabel(b.currency);
+                  const hasDebt = b.outstanding > 0.009;
+                  return (
+                    <div
+                      key={b.currency}
+                      className="rounded-xl border border-border/70 bg-secondary/25 p-2.5 space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-1">
+                        <span className="inline-flex items-center gap-1 text-[10.5px] font-black text-foreground">
+                          <span aria-hidden="true">{conf?.flag}</span>
+                          <span>{conf?.nameAr || b.currency}</span>
+                        </span>
+                        <span className="rounded-md bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[9.5px] font-mono font-black text-primary">
+                          {b.currency} ({curLabel})
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg border border-border/50 bg-card/80 px-2 py-1.5">
+                          <span className="text-[9.5px] text-muted-foreground font-bold block">
+                            إجمالي الفواتير
+                          </span>
+                          <p className="font-mono font-bold text-foreground tabular-nums mt-0.5 leading-tight">
+                            {formatNumber(b.invoiced)}{" "}
+                            <span className="text-[10px] text-muted-foreground font-normal">
+                              {curLabel}
+                            </span>
+                          </p>
+                        </div>
+
+                        <div
+                          className={`rounded-lg border px-2 py-1.5 ${
+                            hasDebt
+                              ? "border-rose-500/25 bg-rose-500/[0.05]"
+                              : "border-emerald-500/20 bg-emerald-500/[0.04]"
+                          }`}
+                        >
+                          <span className="text-[9.5px] text-muted-foreground font-bold block">
+                            المستحق المطلوب
+                          </span>
+                          <p className="font-mono font-black tabular-nums mt-0.5 leading-tight">
+                            {hasDebt ? (
+                              <span className="text-rose-600 dark:text-rose-400">
+                                {formatNumber(b.outstanding)} {curLabel} عليه
+                              </span>
+                            ) : (
+                              <span className="text-emerald-600">متزن (0)</span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div
