@@ -256,7 +256,36 @@ export async function reconcileBankAccountBalance(
       throw new Error("الحساب البنكي المحدد غير موجود");
     }
     const currency = sanitizeCurrency(report.account.currency, "SDG");
-    const previousBalance = report.balance;
+
+    // Account for unpaid purchase invoices in the same currency so reconciliation
+    // aligns 100% with the Bank Statement balance (revenues - expenses - purchase invoices)
+    // with zero double-counting of already-paid supplier allocations.
+    let unpaidPurchases = 0;
+    try {
+      const purRes = await db.query(
+        `SELECT ci.total_amount, COALESCE(paid_agg.paid, 0) AS paid_amount
+           FROM custom_invoices ci
+           LEFT JOIN (
+             SELECT spa.invoice_id, SUM(spa.amount) AS paid
+               FROM supplier_payment_allocations spa
+               JOIN supplier_payments sp ON sp.id = spa.payment_id
+              WHERE sp.cancelled_at IS NULL
+              GROUP BY spa.invoice_id
+           ) paid_agg ON paid_agg.invoice_id = ci.id
+          WHERE ci.type = 'purchase'
+            AND ci.cancelled_at IS NULL
+            AND COALESCE(ci.currency, 'SDG') = ?`,
+        [currency]
+      );
+      for (const prow of purRes.values ?? []) {
+        const unpaid = round2(Math.max(0, (Number(prow.total_amount) || 0) - (Number(prow.paid_amount) || 0)));
+        if (unpaid > 0.004) unpaidPurchases = round2(unpaidPurchases + unpaid);
+      }
+    } catch {
+      // ignore if table absent
+    }
+
+    const previousBalance = round2(report.balance - unpaidPurchases);
     const delta = round2(actualBalance - previousBalance);
 
     if (Math.abs(delta) < 0.005) {
@@ -276,7 +305,10 @@ export async function reconcileBankAccountBalance(
       [input.accountId]
     );
     const hasPriorMovements = (Number(txCountRes.values?.[0]?.c) || 0) > 0;
-    const isInitialSetup = !hasPriorMovements && Math.abs(report.account.openingBalance) < 0.005;
+    const isInitialSetup =
+      !hasPriorMovements &&
+      Math.abs(report.account.openingBalance) < 0.005 &&
+      unpaidPurchases < 0.005;
 
     const sourceType: "opening_balance" | "bank_reconciliation" = isInitialSetup
       ? "opening_balance"

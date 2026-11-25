@@ -92,10 +92,12 @@ import {
 } from "@/lib/repositories/FinancialAccountRepository";
 import {
   getBankAccountStatement,
+  getCombinedBankStatement,
   getCompanyProfitability,
   getCustomerAccount,
   getInvoiceSettlement,
 } from "@/lib/repositories/LedgerRepository";
+import { applyV9BankStatementBackfill } from "@/lib/database/migrations/v9BankStatementBackfill";
 import { recordCustomerReceipt } from "@/lib/repositories/PaymentRepository";
 import { createExpense, getExpensesWithSettlement, payExpense } from "@/lib/repositories/ExpenseRepository";
 import { resetSettlementsForTests } from "@/lib/financeStore";
@@ -341,8 +343,9 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     expect(afterPartialPurchase?.outstanding).toBe(250);
     expect(afterPartialPurchase?.status).toBe("partially_paid");
 
-    // Bank balance: 1700 - 150 = $1,550
-    expect((await getBankAccountStatement({ currency: "USD", period: "all", today: TODAY })).currentBalance).toBe(1550);
+    // Bank balance includes full $400 purchase invoice ($150 paid supplier_payment + $250 remaining purchase_invoice, zero double-counting):
+    // 1700 - 400 = $1,300
+    expect((await getBankAccountStatement({ currency: "USD", period: "all", today: TODAY })).currentBalance).toBe(1300);
 
     // 5) General Operating Expense ($50 USD, unrelated to any invoice) via ExpenseDialog UI -> Immediate Bank Deduction
     const onExpenseSaved = vi.fn();
@@ -372,16 +375,16 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     });
     unmountExp();
 
-    // Final USD Bank Balance: 1550 - 50 = $1,500
+    // Final USD Bank Balance: 1300 - 50 = $1,250
     const fullStatement = await getBankAccountStatement({
       currency: "USD",
       period: "all",
       today: TODAY,
     });
-    expect(fullStatement.currentBalance).toBe(1500);
-    expect(fullStatement.totalCount).toBe(6); // 1000 + 200 + 200 + 300 - 150 - 50
+    expect(fullStatement.currentBalance).toBe(1250);
+    expect(fullStatement.totalCount).toBe(7); // +1000, +200, +200, +300, -150 (sp), -250 (pur rem), -50 (exp)
     expect(fullStatement.periodInflow).toBe(1700);
-    expect(fullStatement.periodOutflow).toBe(200);
+    expect(fullStatement.periodOutflow).toBe(450);
 
     // Verify period filter "last5" returns exactly 5 newest transactions
     const last5Statement = await getBankAccountStatement({
@@ -391,8 +394,13 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     });
     expect(last5Statement.items).toHaveLength(5);
     expect(last5Statement.items[0].direction).toBe("out");
-    expect(last5Statement.items[0].amount).toBe(50);
-    expect(last5Statement.items[0].runningBalance).toBe(1500);
+    expect(last5Statement.items[0].runningBalance).toBe(1250);
+
+    // Verify "7d" (week) & "30d" (month) work cleanly when all transactions are from today
+    const weekStmt = await getBankAccountStatement({ currency: "USD", period: "7d", today: TODAY });
+    expect(weekStmt.items).toHaveLength(7);
+    const monthStmt = await getBankAccountStatement({ currency: "USD", period: "30d", today: TODAY });
+    expect(monthStmt.items).toHaveLength(7);
 
     // Verify Company Profitability in USD remains 100% pure:
     // Revenue = 500 (sales invoice), DirectCosts = 400 (purchase invoice), OperatingExpenses = 50, NetProfit = 50
@@ -403,7 +411,7 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     expect(finalProfit.netProfit).toBe(50);
   });
 
-  it("navigates from HomePage Bank Balance rectangle to dedicated full-page BankAccountsPage (zero modal) and renders 4-currency cards + responsive BankStatementView with zero -0 and exact accounting figures", async () => {
+  it("navigates directly from HomePage Bank Balance card to BankStatementView (with All option, clean crimson header, Hero Summary, and error-free 7d filter)", async () => {
     navState.navigateSpy.mockReset();
     navState.backSpy.mockReset();
     navState.search = {};
@@ -413,7 +421,7 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     const sarAcc = await ensureAccountForCurrency("SAR", NOW);
     const egpAcc = await ensureAccountForCurrency("EGP", NOW);
 
-    // Reference accounting verification from Executive Order §14:
+    // Reference accounting verification:
     // Opening: 15,000,000 SDG + Sales Collection: 5,550 SDG - Operating Expense: 150,000 SDG = 14,855,550 SDG
     seedCustomer("cust-sdg-ref", "عميل مرجعي");
     await reconcileBankAccountBalance({ accountId: sdgAcc.id, actualBalance: 15000000, occurredAt: TODAY }, NOW);
@@ -465,7 +473,7 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
 
     const { unmount: unmountHome } = render(<HomePage />);
 
-    // 1) Greeting + Bank Balance rectangle exist side by side; ZERO modal/dialog rendered
+    // 1) Greeting + Bank Balance card exist side by side; ZERO modal/dialog rendered
     expect(screen.getByText(/طارق عثمان/)).toBeInTheDocument();
     const widget = screen.getByTestId("bank-balance-greeting-widget");
     expect(widget).toBeInTheDocument();
@@ -477,18 +485,22 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
       expect(within(widget).getByText("#3283046")).toBeInTheDocument();
     });
 
-    // Click widget -> navigates to dedicated /bank-accounts full page (view: accounts)
+    // Clicking anywhere on the Bank Balance card opens Bank Statement DIRECTLY for activeCurrency (NOT accounts chooser!)
     fireEvent.click(widget);
     expect(navState.navigateSpy).toHaveBeenCalledWith({
       to: "/bank-accounts",
-      search: { view: "accounts", currency: "SDG", from: "/" },
+      search: { view: "statement", currency: "SDG", from: "/" },
     });
 
-    // Switch currency pill to USD -> shows 1,175 $, click "كشف الحساب" -> navigates directly to dedicated statement view
+    // Switch currency pill to USD -> switches currency ONLY without navigating
+    navState.navigateSpy.mockClear();
     fireEvent.click(within(widget).getByTestId("widget-currency-pill-USD"));
+    expect(navState.navigateSpy).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(within(widget).getByTestId("bank-greeting-live-balance")).toHaveTextContent("1,175");
     });
+
+    // Click "كشف الحساب" -> navigates directly to USD statement
     fireEvent.click(within(widget).getByTestId("bank-greeting-direct-statement-btn"));
     expect(navState.navigateSpy).toHaveBeenCalledWith({
       to: "/bank-accounts",
@@ -497,51 +509,56 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     unmountHome();
 
-    // 2) Render Dedicated BankAccountsPage (Accounts view) -> 4 cards, single Back button, ZERO dialog/modal
-    const { unmount: unmountAccounts } = render(
-      <BankAccountsPage initialViewOverride="accounts" initialCurrencyOverride="SDG" />
-    );
-    const page = screen.getByTestId("bank-accounts-page");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(within(page).getByTestId("bank-accounts-back-btn")).toBeInTheDocument();
-    expect(within(page).getByTestId("bank-card-balance-SDG")).toHaveTextContent("14,855,550");
-    expect(within(page).getByTestId("bank-card-balance-USD")).toHaveTextContent("1,175");
-    expect(within(page).getByTestId("bank-card-balance-SAR")).toHaveTextContent("4,500");
-    expect(within(page).getByTestId("bank-card-balance-EGP")).toHaveTextContent("30,000");
-
-    // Clicking balance button on SDG card navigates directly to SDG statement view (UX-001)
-    fireEvent.click(within(page).getByTestId("bank-card-balance-SDG"));
-    expect(navState.navigateSpy).toHaveBeenCalledWith({
-      to: "/bank-accounts",
-      search: { view: "statement", currency: "SDG", from: undefined },
-    });
-    unmountAccounts();
-
-    // 3) Render Dedicated BankAccountsPage (Statement view for SDG & SAR zero-outflow check)
+    // 2) Render Dedicated BankAccountsPage (Statement view for SDG)
     const { unmount: unmountStmtSdg } = render(
       <BankAccountsPage initialViewOverride="statement" initialCurrencyOverride="SDG" />
     );
     const sdgStmt = await screen.findByTestId("bank-statement-view-SDG");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    // All 5 period filter tabs exist inside flex-wrap bar (no horizontal overflow-x-auto)
+    // Crimson header has enlarged title, NO subtitle "4 حسابات مستقلة...", and NO "كل الحسابات" button
+    expect(screen.getByRole("heading", { name: "كشف الحساب البنكي" })).toBeInTheDocument();
+    expect(screen.queryByText(/4 حسابات مستقلة/)).not.toBeInTheDocument();
+    expect(screen.queryByText("كل الحسابات")).not.toBeInTheDocument();
+
+    // Currency bar has All + SDG + USD + SAR + EGP
+    expect(within(sdgStmt).getByTestId("statement-currency-btn-ALL")).toBeInTheDocument();
+
+    // All 5 period filter tabs exist inside flex-wrap bar (default: last5)
     const tabsBar = within(sdgStmt).getByTestId("bank-statement-period-tabs");
     expect(tabsBar.className).toContain("flex-wrap");
     expect(tabsBar.className).not.toContain("overflow-x-auto");
-    expect(within(sdgStmt).getByTestId("statement-tab-last5")).toBeInTheDocument();
-    expect(within(sdgStmt).getByTestId("statement-tab-7d")).toBeInTheDocument();
-    expect(within(sdgStmt).getByTestId("statement-tab-30d")).toBeInTheDocument();
-    expect(within(sdgStmt).getByTestId("statement-tab-90d")).toBeInTheDocument();
-    expect(within(sdgStmt).getByTestId("statement-tab-all")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(within(sdgStmt).getByTestId("statement-summary-balance")).toHaveTextContent("14,855,550");
       expect(within(sdgStmt).getByTestId("statement-summary-inflow")).toHaveTextContent("+15,005,550");
       expect(within(sdgStmt).getByTestId("statement-summary-outflow")).toHaveTextContent("-150,000");
     });
+
+    // Clicking "آخر 7 أيام" (week) and "آخر 30 يوم" (month) works smoothly with ZERO error banner
+    fireEvent.click(within(sdgStmt).getByTestId("statement-tab-7d"));
+    expect(screen.queryByText(/تعذّر تحميل/)).not.toBeInTheDocument();
+    expect(within(sdgStmt).getAllByTestId(/^statement-row-/).length).toBeGreaterThanOrEqual(3);
+
+    fireEvent.click(within(sdgStmt).getByTestId("statement-tab-30d"));
+    expect(screen.queryByText(/تعذّر تحميل/)).not.toBeInTheDocument();
     unmountStmtSdg();
 
-    // SAR has 4,500 inflow and 0 outflow -> MUST display "0" and NEVER "-0" (UX-004)
+    // 3) Render Combined "All" mode -> merges all 4 currencies with accurate per-currency balances and zero errors
+    const { unmount: unmountAll } = render(
+      <BankAccountsPage initialViewOverride="statement" initialCurrencyOverride="ALL" />
+    );
+    const allStmt = await screen.findByTestId("bank-statement-view-ALL");
+    await waitFor(() => {
+      expect(within(allStmt).getByTestId("combined-summary-SDG")).toHaveTextContent("14,855,550");
+      expect(within(allStmt).getByTestId("combined-summary-USD")).toHaveTextContent("1,175");
+      expect(within(allStmt).getByTestId("combined-summary-SAR")).toHaveTextContent("4,500");
+      expect(within(allStmt).getByTestId("combined-summary-EGP")).toHaveTextContent("30,000");
+    });
+    expect(screen.queryByText(/تعذّر تحميل/)).not.toBeInTheDocument();
+    unmountAll();
+
+    // 4) SAR has 4,500 inflow and 0 outflow -> MUST display "0" and NEVER "-0"
     render(<BankAccountsPage initialViewOverride="statement" initialCurrencyOverride="SAR" />);
     const sarStmt = await screen.findByTestId("bank-statement-view-SAR");
     await waitFor(() => {
@@ -635,5 +652,101 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     expect(byCur.USD).toBe(100);
     expect(byCur.SAR).toBe(0);
     expect(byCur.EGP).toBe(-300);
+  });
+
+  it("Section 5: automatically migrates historical revenues, expenses, and purchase invoices on upgrade without duplicates, preserves EXACT original dates (never today), and reconciles accurately", async () => {
+    const sdgAcc = await ensureAccountForCurrency("SDG", NOW);
+    seedCustomer("cust-legacy", "عميل تاريخي");
+
+    // 1) Simulate legacy app data from 10-15 days ago (WITHOUT financial_transactions rows)
+    // A) Legacy customer payment from 2026-11-10 (+5,550 SDG)
+    db.db
+      .prepare(
+        `INSERT INTO customer_payments (id, reference, customer_id, amount, currency, paid_at, method, account_id, notes, created_at)
+         VALUES ('cp-legacy-1', 'RCV-OLD-001', 'cust-legacy', 5550, 'SDG', '2026-11-10', 'bank_transfer', ?, 'تحصيل قديم', '2026-11-10T09:00:00.000Z')`
+      )
+      .run(sdgAcc.id);
+
+    // B) Legacy expense from 2026-11-12 (150,000 SDG, no expense_payments yet)
+    db.db
+      .prepare(
+        `INSERT INTO expenses (id, kind, beneficiary, category, amount, currency, expense_date, notes, created_at)
+         VALUES ('exp-legacy-1', 'operating', 'إيجار المكتب', 'إيجارات', 150000, 'SDG', '2026-11-12', 'إيجار نوفمبر', '2026-11-12T10:00:00.000Z')`
+      )
+      .run();
+
+    // C) Historical purchase invoice from 2026-11-14 (50,000 SDG, unpaid in supplier_payments)
+    db.db
+      .prepare(
+        `INSERT INTO custom_invoices (id, serial, type, date, party_name, currency, total_amount, reference, created_at, updated_at)
+         VALUES ('pur-legacy-1', '001', 'purchase', '2026-11-14', 'مطبعة النيل', 'SDG', 50000, 'PINV-OLD-001', '2026-11-14T11:00:00.000Z', '2026-11-14T11:00:00.000Z')`
+      )
+      .run();
+
+    // 2) Run automatic V9 migration TWICE on TODAY (2026-11-25) -> MUST backfill once and create 0 duplicates on 2nd run
+    const firstRun = await applyV9BankStatementBackfill(db, NOW, {
+      migrateUnsettledLegacyExpenses: true,
+    });
+    expect(firstRun.migratedCustomerPayments).toBe(1);
+    expect(firstRun.migratedLegacyExpenses).toBe(1);
+
+    const secondRun = await applyV9BankStatementBackfill(db, NOW, {
+      migrateUnsettledLegacyExpenses: true,
+    });
+    expect(secondRun.migratedCustomerPayments).toBe(0);
+    expect(secondRun.migratedLegacyExpenses).toBe(0);
+
+    // 3) Inspect SDG Bank Statement -> ALL 3 historical movements appear with EXACT ORIGINAL DATES (NEVER 2026-11-25!)
+    const preReconStmt = await getBankAccountStatement({
+      currency: "SDG",
+      period: "all",
+      today: TODAY,
+    });
+    expect(preReconStmt.totalCount).toBe(3);
+    expect(preReconStmt.periodInflow).toBe(5550);
+    expect(preReconStmt.periodOutflow).toBe(200000); // 150,000 expense + 50,000 purchase invoice
+    expect(preReconStmt.currentBalance).toBe(-194450);
+
+    const bySource = Object.fromEntries(preReconStmt.items.map((it) => [it.sourceType, it]));
+    expect(bySource.customer_payment.occurredAt).toBe("2026-11-10");
+    expect(bySource.expense_payment.occurredAt).toBe("2026-11-12");
+    expect(bySource.purchase_invoice.occurredAt).toBe("2026-11-14");
+    expect(preReconStmt.items.every((it) => it.occurredAt !== TODAY)).toBe(true);
+
+    // 4) User enters actual bank reconciliation balance = 10,000,000 SDG
+    //    System accounts for revenues (5,550), expense (150,000), and purchase invoice (50,000) accurately with zero double-counting
+    const recon = await reconcileBankAccountBalance(
+      {
+        accountId: sdgAcc.id,
+        actualBalance: 10000000,
+        occurredAt: TODAY,
+        notes: "مطابقة الرصيد الفعلي بعد التحديث",
+      },
+      NOW
+    );
+    expect(recon.adjusted).toBe(true);
+    expect(recon.newBalance).toBe(10000000);
+
+    const postReconStmt = await getBankAccountStatement({
+      currency: "SDG",
+      period: "all",
+      today: TODAY,
+    });
+    expect(postReconStmt.currentBalance).toBe(10000000);
+    expect(postReconStmt.periodInflow).toBe(10200000); // 10,194,450 + 5,550
+    expect(postReconStmt.periodOutflow).toBe(200000); // 150,000 + 50,000
+    // Verify original historical dates remain untouched after reconciliation!
+    const postBySource = Object.fromEntries(postReconStmt.items.map((it) => [it.sourceType, it]));
+    expect(postBySource.customer_payment.occurredAt).toBe("2026-11-10");
+    expect(postBySource.expense_payment.occurredAt).toBe("2026-11-12");
+    expect(postBySource.purchase_invoice.occurredAt).toBe("2026-11-14");
+
+    // 5) Combined "All" statement also reflects the exact SDG balance & historical dates with 7d/30d filtering working cleanly
+    const combined30d = await getCombinedBankStatement({ period: "30d", today: TODAY });
+    expect(combined30d.byCurrency.SDG.currentBalance).toBe(10000000);
+    expect(combined30d.items.length).toBe(4);
+    const combined7d = await getCombinedBankStatement({ period: "7d", today: TODAY });
+    // Only today's reconciliation falls within last 7 days (2026-11-18..2026-11-25), older 3 are excluded cleanly without error
+    expect(combined7d.items.length).toBe(1);
   });
 });

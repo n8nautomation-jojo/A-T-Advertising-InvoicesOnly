@@ -145,7 +145,7 @@ export function ExpenseDialog({
         (settleExpense as ExpenseWithSettlement).settlement?.outstanding ?? settleExpense.amount;
       setAmount(String(remainingToPay));
       setCurrency(sanitizeCurrency(settleExpense.currency, DEFAULT_CURRENCY));
-      setExpenseDate(today);
+      setExpenseDate(settleExpense.expenseDate || today);
       setMethod("bank_transfer");
       setNotes("");
     } else {

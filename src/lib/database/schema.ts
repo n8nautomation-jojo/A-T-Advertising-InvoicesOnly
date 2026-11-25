@@ -11,7 +11,7 @@ export const DB_NAME = "ta_invoicing_db";
  * الإصدار المنطقي للمخطط — يطابق آخر ترحيل في `migrations/index.ts`
  * (v8: نموذج الأعمال + الترقيم + التسويات + إدارة العملاء + المحاسبة متعددة العملات + الخطابات الرسمية + الحسابات البنكية الأربعة المعيارية).
  */
-export const DB_VERSION = 8;
+export const DB_VERSION = 9;
 
 /**
  * Complete DDL for version 1.

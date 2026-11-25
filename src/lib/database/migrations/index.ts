@@ -27,8 +27,9 @@ import { V5_VERSION, applyV5 } from "./v5CustomerModule";
 import { V6_VERSION, applyV6MultiCurrency } from "./v6MultiCurrency";
 import { V7_VERSION, applyV7OfficialLetters } from "./v7OfficialLetters";
 import { V8_VERSION, applyV8MultiCurrencyAccounts } from "./v8MultiCurrencyAccounts";
+import { V9_VERSION, applyV9BankStatementBackfill } from "./v9BankStatementBackfill";
 
-export const SCHEMA_VERSION = V8_VERSION;
+export const SCHEMA_VERSION = V9_VERSION;
 
 export interface MigrationOutcome {
   from: number;
@@ -216,6 +217,22 @@ export async function runPendingMigrations(
     }
   }
 
+  if (!haltUpgrade && outcome.from < V9_VERSION) {
+    try {
+      const v9 = await applyV9BankStatementBackfill(db, nowIso, {
+        migrateUnsettledLegacyExpenses: true,
+      });
+      await setStoredSchemaVersion(db, V9_VERSION, nowIso);
+      outcome.applied.push(
+        `v9 (bank backfill: cp=${v9.migratedCustomerPayments}, sp=${v9.migratedSupplierPayments}, ep=${v9.migratedExpensePayments}, exp=${v9.migratedLegacyExpenses}, dates=${v9.repairedTransactionDates})`
+      );
+    } catch (err) {
+      haltUpgrade = true;
+      outcome.warnings.push(`v9: ${String(err)}`);
+      console.error("[Migration] v9 failed; version left unchanged for a retry:", err);
+    }
+  }
+
   outcome.to = await getStoredSchemaVersion(db);
   return outcome;
 }
@@ -232,5 +249,5 @@ export async function backfillReferencesOnly(
   return report;
 }
 
-export { V2_VERSION, V3_VERSION, V4_VERSION, V5_VERSION, V6_VERSION, V7_VERSION, V8_VERSION };
+export { V2_VERSION, V3_VERSION, V4_VERSION, V5_VERSION, V6_VERSION, V7_VERSION, V8_VERSION, V9_VERSION };
 export type { MigrationDatabase };

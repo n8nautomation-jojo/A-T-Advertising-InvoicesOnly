@@ -159,6 +159,10 @@ export function SupplierPaymentDialog({
             }
           }
 
+          if (directInvoice.meta.date) {
+            setPaidAt(directInvoice.meta.date);
+          }
+
           if (directSettlement && directSettlement.outstanding > 0) {
             appliedInitialInvoiceRef.current = initialInvoiceId;
             setRows([{ invoiceId: initialInvoiceId, amount: String(directSettlement.outstanding) }]);

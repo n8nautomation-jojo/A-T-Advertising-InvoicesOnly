@@ -15,6 +15,7 @@ import {
   ensureStandardCurrencyAccounts,
   getAccountBalances,
 } from "@/lib/repositories/FinancialAccountRepository";
+import { getUnpaidPurchaseTotalsByCurrency } from "@/lib/repositories/LedgerRepository";
 
 export interface CurrencyBankSummary {
   currency: AppCurrency;
@@ -115,7 +116,10 @@ export async function refreshBankTreasury(): Promise<void> {
   if (inflightRefresh) return inflightRefresh;
   inflightRefresh = (async () => {
     try {
-      let reports = await getAccountBalances();
+      let [reports, unpaidPurchases] = await Promise.all([
+        getAccountBalances(),
+        getUnpaidPurchaseTotalsByCurrency(),
+      ]);
       const presentCurrencies = new Set(
         reports.map((r) => sanitizeCurrency(r.account.currency, DEFAULT_CURRENCY))
       );
@@ -129,19 +133,29 @@ export async function refreshBankTreasury(): Promise<void> {
         const curReports = reports.filter(
           (r) => sanitizeCurrency(r.account.currency, DEFAULT_CURRENCY) === cfg.code
         );
+        const unpaidPur = unpaidPurchases[cfg.code] ?? 0;
         if (curReports.length > 0) {
           const preferred =
             getPreferredAccountForCurrency(
               curReports.map((r) => r.account),
               cfg.code
             ) ?? curReports[0].account;
+          const ledgerBalance = round2(curReports.reduce((s, r) => s + r.balance, 0));
+          const ledgerInflow = round2(curReports.reduce((s, r) => s + r.inflow, 0));
+          const ledgerOutflow = round2(curReports.reduce((s, r) => s + r.outflow, 0));
           nextByCur[cfg.code] = {
             currency: cfg.code,
-            balance: round2(curReports.reduce((s, r) => s + r.balance, 0)),
-            inflow: round2(curReports.reduce((s, r) => s + r.inflow, 0)),
-            outflow: round2(curReports.reduce((s, r) => s + r.outflow, 0)),
+            balance: round2(ledgerBalance - unpaidPur),
+            inflow: ledgerInflow,
+            outflow: round2(ledgerOutflow + unpaidPur),
             primaryAccount: preferred,
             accounts: curReports,
+          };
+        } else if (unpaidPur > 0.004) {
+          nextByCur[cfg.code] = {
+            ...nextByCur[cfg.code],
+            balance: round2(-unpaidPur),
+            outflow: unpaidPur,
           };
         }
       }

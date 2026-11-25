@@ -14,7 +14,11 @@ import { useBankTreasury } from "@/lib/bankTreasuryStore";
 import { formatNumber } from "@/lib/printCalculator";
 import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { CURRENCY_LIST, sanitizeCurrency, type AppCurrency } from "@/lib/currency/types";
-import type { BankAccountsRouteSearch, BankAccountsView } from "@/routes/bank-accounts";
+import type {
+  BankAccountsRouteSearch,
+  BankAccountsView,
+  BankStatementCurrencyFilter,
+} from "@/routes/bank-accounts";
 import { BankStatementView } from "./BankStatementView";
 import { BankReconciliationSheet } from "./BankReconciliationSheet";
 import { ReceiptDialog } from "./ReceiptDialog";
@@ -43,13 +47,12 @@ function normalizeZero(value: number | undefined | null): number {
 interface BankAccountsPageProps {
   /** خصائص اختيارية للاختبار المباشر للمكون خارج Router إن لزم */
   initialViewOverride?: BankAccountsView;
-  initialCurrencyOverride?: AppCurrency;
+  initialCurrencyOverride?: BankStatementCurrencyFilter;
 }
 
 /**
- * الصفحة المستقلة لتفاصيل الحسابات البنكية وكشف الحساب ومطابقة الرصيد (UX-001, UX-002).
- * تحافظ بالكامل على الهوية البصرية والألوان والبطاقات والوظائف الحالية دون نافذة منبثقة (Modal/Dialog)
- * مع استجابة كاملة وبدون أي تمرير أفقي على شاشات الهواتف والحاسوب.
+ * الصفحة المستقلة لكشف الحساب البنكي ومطابقة الرصيد (دون نافذة منبثقة Modal/Dialog).
+ * تحافظ على الهوية البصرية واتجاه RTL مع هيدر علوي واضح ومباشر وشريط عملات يشمل خيار All.
  */
 export function BankAccountsPage({
   initialViewOverride,
@@ -61,11 +64,12 @@ export function BankAccountsPage({
 
   const { byCurrency, activeCurrency, setActiveCurrency, refresh } = useBankTreasury();
 
-  const view: BankAccountsView = initialViewOverride ?? routeSearch?.view ?? "accounts";
-  const selectedCur: AppCurrency = sanitizeCurrency(
-    initialCurrencyOverride ?? routeSearch?.currency ?? activeCurrency,
-    "SDG"
-  );
+  const view: BankAccountsView = initialViewOverride ?? routeSearch?.view ?? "statement";
+  const rawCur = initialCurrencyOverride ?? routeSearch?.currency ?? activeCurrency;
+  const selectedCur: BankStatementCurrencyFilter =
+    rawCur === "ALL" ? "ALL" : sanitizeCurrency(rawCur, "SDG");
+  const reconcileCur: AppCurrency =
+    selectedCur === "ALL" ? activeCurrency : selectedCur;
   const returnTo = routeSearch?.from;
 
   const [quickReceiptCur, setQuickReceiptCur] = useState<AppCurrency | null>(null);
@@ -77,13 +81,19 @@ export function BankAccountsPage({
   }, [refresh]);
 
   useEffect(() => {
-    if (routeSearch?.currency && routeSearch.currency !== activeCurrency) {
+    if (
+      routeSearch?.currency &&
+      routeSearch.currency !== "ALL" &&
+      routeSearch.currency !== activeCurrency
+    ) {
       setActiveCurrency(routeSearch.currency);
     }
   }, [routeSearch?.currency, activeCurrency, setActiveCurrency]);
 
-  const navigateToView = (nextView: BankAccountsView, cur: AppCurrency) => {
-    setActiveCurrency(cur);
+  const navigateToView = (nextView: BankAccountsView, cur: BankStatementCurrencyFilter) => {
+    if (cur !== "ALL") {
+      setActiveCurrency(cur);
+    }
     void navigate({
       to: "/bank-accounts",
       search: {
@@ -95,20 +105,19 @@ export function BankAccountsPage({
   };
 
   const handleBack = () => {
-    // إذا كان هناك سجل تنقل فعلي، نستخدم رجوع المتصفح/الراوتر للحفاظ على حالة الصفحة السابقة
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.history.back();
+    if (view === "reconcile") {
+      navigateToView("statement", selectedCur);
       return;
     }
-    if (view !== "accounts") {
-      navigateToView("accounts", selectedCur);
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.history.back();
       return;
     }
     const target = returnTo && returnTo.startsWith("/") ? returnTo : "/";
     void navigate({ to: target as "/" });
   };
 
-  const selectedSummary = byCurrency[selectedCur];
+  const selectedSummary = byCurrency[reconcileCur];
 
   return (
     <PageShell>
@@ -118,52 +127,32 @@ export function BankAccountsPage({
         className="w-full flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-36 md:pb-16"
       >
         <div className="mx-auto max-w-4xl w-full min-w-0 space-y-3.5">
-          {/* Top Crimson-Accented Banking Header (Preserved exact visual identity + single Back button, ZERO duplicate X) */}
-          <header className="bg-gradient-to-l from-[#B71C1C] to-[#D32F2F] text-white px-3.5 py-3 sm:px-5 sm:py-4 rounded-2xl shadow-sm w-full min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
-              {/* Top Action Row on Mobile (Back + All Accounts), inline on Desktop */}
-              <div className="flex items-center justify-between sm:justify-start gap-2.5 sm:contents">
+          {/* Top Crimson-Accented Banking Header: Enlarged prominent title, single Back button, no subtitle, no "كل الحسابات" */}
+          <header className="bg-gradient-to-l from-[#B71C1C] to-[#D32F2F] text-white px-4 py-3.5 sm:px-5 sm:py-4 rounded-2xl shadow-sm w-full min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2.5 min-w-0">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                 <button
                   type="button"
                   data-testid="bank-accounts-back-btn"
                   onClick={handleBack}
                   aria-label="رجوع"
-                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 px-2.5 text-xs font-black text-white transition-colors active:scale-95 cursor-pointer touch-manipulation sm:order-1"
+                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 px-2.5 text-xs font-black text-white transition-colors active:scale-95 cursor-pointer touch-manipulation"
                 >
                   <ArrowRight className="h-4 w-4 shrink-0" />
                   <span>رجوع</span>
                 </button>
 
-                {view !== "accounts" && (
-                  <button
-                    type="button"
-                    data-testid="bank-accounts-all-accounts-btn"
-                    onClick={() => navigateToView("accounts", selectedCur)}
-                    className="inline-flex h-9 items-center gap-1 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 px-3 text-[11px] font-black text-white transition-colors shrink-0 cursor-pointer sm:order-3"
-                  >
-                    <span>كل الحسابات</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Icon + Title + Subtitle (Full width on narrow phones, centered/inline on desktop) */}
-              <div className="flex items-center gap-2.5 min-w-0 sm:flex-1 sm:order-2">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/15 border border-white/25">
-                  <Landmark className="h-4.5 w-4.5 text-white" />
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/15 border border-white/25">
+                  <Landmark className="h-5 w-5 text-white" />
                 </span>
 
-                <div className="text-right min-w-0 flex-1">
-                  <h1 className="text-sm sm:text-base font-black text-white leading-snug break-words">
-                    {view === "accounts"
-                      ? "تفاصيل الحسابات البنكية"
-                      : view === "statement"
-                      ? "كشف الحساب البنكي"
-                      : "مطابقة وتغذية الرصيد البنكي"}
-                  </h1>
-                  <p className="text-[10.5px] sm:text-[11px] font-bold text-white/85 leading-snug break-words">
-                    4 حسابات مستقلة (جنيه سوداني · دولار · ريال · جنيه مصري)
-                  </p>
-                </div>
+                <h1 className="text-lg sm:text-xl font-black text-white leading-tight tracking-tight break-words min-w-0 flex-1">
+                  {view === "statement"
+                    ? "كشف الحساب البنكي"
+                    : view === "reconcile"
+                    ? "مطابقة وتغذية الرصيد البنكي"
+                    : "تفاصيل الحسابات البنكية"}
+                </h1>
               </div>
             </div>
           </header>
@@ -191,9 +180,7 @@ export function BankAccountsPage({
                         : "border-slate-200/90 dark:border-border/80"
                     }`}
                   >
-                    {/* Upper Account Card Info (Preserved Bankak card layout, responsive wrap for 320px+) */}
                     <div className="flex flex-wrap items-start justify-between gap-2.5 p-3.5 sm:p-4 min-w-0">
-                      {/* Right Side: Vault Icon + Account Title + Account Number */}
                       <div className="flex items-start gap-2.5 sm:gap-3 min-w-0 flex-1">
                         <div
                           className={`h-11 w-11 rounded-2xl flex flex-col items-center justify-center shrink-0 border ${
@@ -238,7 +225,6 @@ export function BankAccountsPage({
                         </div>
                       </div>
 
-                      {/* Left Side: Clickable Balance Button -> opens Statement directly (UX-001) */}
                       <button
                         type="button"
                         data-testid={`bank-card-balance-${cfg.code}`}
@@ -263,7 +249,6 @@ export function BankAccountsPage({
                     </div>
 
                     <div>
-                      {/* Middle Divider Action Row: عرض كشف الحساب | مطابقة وتحديث الرصيد */}
                       <div className="grid grid-cols-2 border-t border-slate-200/80 dark:border-border/70 bg-slate-50/60 dark:bg-muted/20 divide-x divide-x-reverse divide-slate-200 dark:divide-border/70">
                         <button
                           type="button"
@@ -286,7 +271,6 @@ export function BankAccountsPage({
                         </button>
                       </div>
 
-                      {/* Connected Operational Quick Actions for this Currency */}
                       <div className="grid grid-cols-3 gap-1 border-t border-slate-100 dark:border-border/40 bg-white dark:bg-card px-2 py-1.5">
                         <button
                           type="button"
@@ -326,23 +310,23 @@ export function BankAccountsPage({
               hideInlineBack
               standalonePage
               onChangeCurrency={(nextCur) => navigateToView("statement", nextCur)}
-              onOpenReconcile={() => navigateToView("reconcile", selectedCur)}
+              onOpenReconcile={() => navigateToView("reconcile", reconcileCur)}
             />
           )}
 
           {view === "reconcile" && (
             <BankReconciliationSheet
-              currency={selectedCur}
+              currency={reconcileCur}
               account={selectedSummary.primaryAccount}
               currentBalance={selectedSummary.balance}
               hideInlineBack
-              onCompleted={() => navigateToView("statement", selectedCur)}
+              onCompleted={() => navigateToView("statement", reconcileCur)}
             />
           )}
         </div>
       </main>
 
-      {/* Connected Quick Action Dialogs (Preserved exact app behavior) */}
+      {/* Connected Quick Action Dialogs */}
       <ReceiptDialog
         open={Boolean(quickReceiptCur)}
         onOpenChange={(v) => !v && setQuickReceiptCur(null)}

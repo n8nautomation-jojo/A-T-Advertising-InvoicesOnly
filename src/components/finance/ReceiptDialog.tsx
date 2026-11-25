@@ -169,6 +169,10 @@ export function ReceiptDialog({
               : preferred?.id ?? matching[0]?.id ?? ""
           );
 
+          if (invoice?.date) {
+            setPaidAt(invoice.date);
+          }
+
           const matchedCustomerId = invoice
             ? resolveCustomerIdForInvoice(invoice, customersRef.current)
             : initialCustomerId ?? "";

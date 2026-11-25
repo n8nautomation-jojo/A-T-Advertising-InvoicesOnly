@@ -6,7 +6,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CREATE_SCHEMA_V1 } from "@/lib/database/schema";
+import { CREATE_SCHEMA_V1, DB_VERSION } from "@/lib/database/schema";
 import {
   EXPENSE_PAYMENT_TARGET,
   allocateDocumentNumber,
@@ -35,7 +35,7 @@ beforeEach(async () => {
   const outcome = await runPendingMigrations(db, { nowIso: NOW });
   expect(outcome.warnings).toEqual([]);
   expect(outcome.to).toBe(SCHEMA_VERSION);
-  expect(outcome.to).toBe(8);
+  expect(outcome.to).toBe(DB_VERSION);
 });
 
 function insertInvoice(id: string, type: string, date: string, reference: string | null, createdAt: string) {
