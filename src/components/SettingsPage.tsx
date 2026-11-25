@@ -94,7 +94,7 @@ const Settings: React.FC = () => {
 
   return (
     <PageShell>
-      <main className="mx-auto flex w-full max-w-md flex-1 min-h-0 flex-col gap-3.5 overflow-y-auto overflow-x-hidden px-4 py-4 pb-36 md:max-w-3xl md:pb-16 touch-pan-y overscroll-contain">
+      <main className="mx-auto flex w-full max-w-md flex-1 min-h-0 flex-col gap-3.5 overflow-y-auto overflow-x-hidden px-4 py-4 pb-36 md:max-w-3xl md:pb-16 overscroll-y-contain">
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-border/50 pb-3">
           <div className="flex items-center gap-2.5">

@@ -21,7 +21,12 @@ export type AuditAction =
   | "reference_backfill"
   | "archive"
   | "unarchive"
-  | "delete";
+  | "delete"
+  | "reactivate"
+  | "opening_balance"
+  | "bank_reconciliation"
+  | "external_deposit"
+  | "external_withdrawal";
 
 export interface AuditEntry {
   id: string;

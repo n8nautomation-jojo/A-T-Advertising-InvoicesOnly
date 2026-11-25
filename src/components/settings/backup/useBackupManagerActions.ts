@@ -1,7 +1,11 @@
 import { useCallback, useState, type RefObject } from "react";
 import { toast } from "sonner";
 import { backupBridge } from "@/lib/backup/bridge";
-import { createManualBackup } from "@/lib/backup/autoBackup";
+import {
+  createManualBackup,
+  runInitialBackupAfterFolderLink,
+  runCatchUpAutoBackupIfNeeded,
+} from "@/lib/backup/autoBackup";
 import { importLegacyJson, restoreBackup } from "@/lib/backup/restoreService";
 import { saveBackupSettings } from "@/lib/backup/settingsStore";
 import { bytesToBase64 } from "@/lib/backup/crypto";
@@ -58,9 +62,42 @@ export function useBackupManagerActions({
       await saveBackupSettings({
         folderUri: result.folderUri ?? "",
         folderLabel: result.folderLabel ?? "",
+        lastBackupStatus: "never",
+        lastBackupMessage: null,
       });
-      playSuccessSound();
-      toast.success("تم ربط مجلد النسخ الاحتياطي: " + (result.folderLabel || ""));
+      setBusy("folder-backup");
+      let initialRes: Awaited<ReturnType<typeof runInitialBackupAfterFolderLink>> | null = null;
+      try {
+        initialRes = await runInitialBackupAfterFolderLink();
+      } catch {
+        initialRes = null;
+      }
+      if (initialRes?.ok && !initialRes.skipped) {
+        playSuccessSound();
+        const totalRecords =
+          initialRes.manifest?.totalBusinessRecords ??
+          countBusinessRecords(initialRes.manifest?.counts);
+        toast.success(
+          "تم ربط المجلد وتفعيل النسخ التلقائي وحفظ أول نسخة احتياطية بنجاح (" +
+            totalRecords +
+            " سجل — " +
+            formatBytes(initialRes.sizeBytes) +
+            ")"
+        );
+      } else {
+        playSuccessSound();
+        toast.success(
+          "تم ربط مجلد النسخ الاحتياطي وتفعيل الحماية التلقائية: " +
+            (result.folderLabel || "")
+        );
+        if (initialRes?.message) {
+          toast.info(initialRes.message);
+        } else {
+          toast.info(
+            "سيتم حفظ أول نسخة احتياطية تلقائياً فور توفر بيانات جديدة."
+          );
+        }
+      }
       await refresh();
     } catch (err: any) {
       toast.error(
@@ -248,13 +285,28 @@ export function useBackupManagerActions({
     async (updated: Partial<BackupSettings>) => {
       try {
         await saveBackupSettings(updated);
+        const pruneRes =
+          updated.retention && folderUri
+            ? await backupBridge.pruneBackups().catch(() => null)
+            : null;
+        if ((updated.autoDaily || updated.afterTransaction) && folderUri) {
+          void runCatchUpAutoBackupIfNeeded();
+        }
         await refresh();
-        toast.success("تم حفظ إعدادات النسخ الاحتياطي.");
+        if (pruneRes?.ok && (pruneRes.prunedCount ?? 0) > 0) {
+          toast.success(
+            "تم حفظ الإعدادات وحذف " +
+              pruneRes.prunedCount +
+              " نسخة قديمة تلقائياً لتوفير المساحة."
+          );
+        } else {
+          toast.success("تم حفظ إعدادات النسخ الاحتياطي.");
+        }
       } catch (err: any) {
         toast.error("تعذّر حفظ الإعدادات: " + (err?.message ?? err));
       }
     },
-    [refresh]
+    [refresh, folderUri]
   );
 
   const handleExportRecoveryKey = useCallback(async (): Promise<RecoveryKeyExportResponse> => {

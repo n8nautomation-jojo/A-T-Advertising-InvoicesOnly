@@ -7,7 +7,9 @@ import android.os.Build;
 import android.util.Log;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
+import androidx.work.OneTimeWorkRequest;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import com.getcapacitor.JSObject;
@@ -53,6 +55,13 @@ public class BackupPlugin extends Plugin {
             try {
                 JSObject result = task.run();
                 call.resolve(result);
+            } catch (BackupStorage.FolderUnavailableException e) {
+                Log.e(TAG, "plugin task folder unavailable: " + e.code, e);
+                JSObject err = new JSObject();
+                err.put("ok", false);
+                err.put("errorCode", e.code);
+                err.put("message", e.getMessage() == null ? "" : e.getMessage());
+                call.resolve(err);
             } catch (Exception e) {
                 Log.e(TAG, "plugin task failed", e);
                 JSObject err = new JSObject();
@@ -108,15 +117,17 @@ public class BackupPlugin extends Plugin {
             return;
         }
         final Uri treeUri = result.getData().getData();
+        final int intentFlags = result.getData().getFlags();
         background(call, () -> {
             BackupStorage storage = engine().storage();
-            storage.persistFolder(treeUri);
+            storage.persistFolder(treeUri, intentFlags);
             engine().rememberPreferredFolder(treeUri.toString());
             BackupEngine.prefs(getContext())
                 .edit()
                 .putString("folder_uri", treeUri.toString())
                 .putString("folder_label", storage.getFolderLabel())
                 .commit();
+            engine().clearLastFailureState();
             scheduleWork();
             JSObject out = new JSObject();
             out.put("ok", true);
@@ -272,19 +283,21 @@ public class BackupPlugin extends Plugin {
                 .edit()
                 .putBoolean("encryption_enabled", settings.optBoolean("encryptionEnabled", false))
                 .putBoolean("auto_daily", settings.optBoolean("autoDaily", true))
-                .putInt("retention_daily", settings.optInt("retentionDaily", 7))
-                .putInt("retention_weekly", settings.optInt("retentionWeekly", 4))
-                .putInt("retention_monthly", settings.optInt("retentionMonthly", 12))
+                .putBoolean("after_transaction", settings.optBoolean("afterTransaction", true))
+                .putInt("retention_daily", Math.max(0, settings.optInt("retentionDaily", 30)))
+                .putInt("retention_weekly", Math.max(0, settings.optInt("retentionWeekly", 4)))
+                .putInt("retention_monthly", Math.max(0, settings.optInt("retentionMonthly", 1)))
+                .putInt("retention_max_age_days", Math.max(0, settings.optInt("retentionMaxAgeDays", 30)))
                 .putInt("retention_min", Math.max(1, settings.optInt("retentionMinimum", 2)))
                 .putInt("stale_after_hours", Math.max(1, settings.optInt("staleAfterHours", 48)))
-                .putInt("transaction_throttle_minutes", Math.max(1, settings.optInt("transactionThrottleMinutes", 15)))
+                .putInt("transaction_throttle_minutes", Math.max(1, settings.optInt("transactionThrottleMinutes", 2)))
                 .commit();
             if (settings.has("transactionThrottleMinutes")) {
                 BackupEngine.prefs(getContext())
                     .edit()
                     .putLong(
                         "transaction_throttle_ms",
-                        Math.max(1, settings.optInt("transactionThrottleMinutes", 15)) * 60000L
+                        Math.max(1, settings.optInt("transactionThrottleMinutes", 2)) * 60000L
                     )
                     .commit();
             }
@@ -321,15 +334,53 @@ public class BackupPlugin extends Plugin {
                 wm.cancelUniqueWork(BackupWorker.WORK_NAME);
                 return;
             }
-            PeriodicWorkRequest request = new PeriodicWorkRequest.Builder(BackupWorker.class, 24, TimeUnit.HOURS)
-                .setInitialDelay(15, TimeUnit.MINUTES)
-                .setConstraints(new Constraints.Builder().setRequiresBatteryNotLow(true).setRequiredNetworkType(NetworkType.NOT_REQUIRED).build())
+            Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                .build();
+            PeriodicWorkRequest request = new PeriodicWorkRequest.Builder(
+                BackupWorker.class,
+                12,
+                TimeUnit.HOURS,
+                2,
+                TimeUnit.HOURS
+            )
+                .setConstraints(constraints)
                 .addTag(BackupWorker.WORK_NAME)
                 .build();
-            wm.enqueueUniquePeriodicWork(BackupWorker.WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request);
+            wm.enqueueUniquePeriodicWork(BackupWorker.WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request);
         } catch (Throwable t) {
             Log.e(TAG, "could not schedule backups", t);
         }
+    }
+
+    @PluginMethod
+    public void scheduleImmediateCatchUp(PluginCall call) {
+        background(call, () -> {
+            JSObject out = new JSObject();
+            try {
+                WorkManager wm = WorkManager.getInstance(getContext());
+                Constraints constraints = new Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                    .build();
+                OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(BackupWorker.class)
+                    .setConstraints(constraints)
+                    .addTag(BackupWorker.CATCHUP_WORK_NAME)
+                    .build();
+                wm.enqueueUniqueWork(BackupWorker.CATCHUP_WORK_NAME, ExistingWorkPolicy.KEEP, request);
+                out.put("ok", true);
+            } catch (Throwable t) {
+                Log.e(TAG, "could not schedule catch-up backup", t);
+                out.put("ok", false);
+                out.put("errorCode", "IO_FAILED");
+                out.put("message", String.valueOf(t.getMessage()));
+            }
+            return out;
+        });
+    }
+
+    @PluginMethod
+    public void pruneBackups(PluginCall call) {
+        background(call, () -> new JSObject(engine().pruneBackups().toString()));
     }
 
     @PluginMethod

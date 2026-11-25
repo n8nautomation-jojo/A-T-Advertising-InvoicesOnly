@@ -84,6 +84,7 @@ export interface MoneyMovement {
   sourceType?: string | undefined;
   sourceId?: string | undefined;
   reference?: string | undefined;
+  notes?: string | undefined;
   reversed: boolean;
 }
 
@@ -113,6 +114,7 @@ export async function getMoneyMovements(limit = 200, currency?: AppCurrency): Pr
     sourceType: row.source_type ?? undefined,
     sourceId: row.source_id ?? undefined,
     reference: row.reference_note ?? undefined,
+    notes: row.notes ?? undefined,
     reversed: Boolean(row.reversed_by),
   }));
 }
@@ -125,20 +127,31 @@ export interface CustomerAccount {
   invoiceCount: number;
 }
 
-/** Customer receivables derived from invoices and their allocations (§9.1). */
+/** Customer receivables derived from opening balance + invoices and their collections (§9.1). */
 export async function getCustomerAccount(customerId: string, currency?: AppCurrency): Promise<CustomerAccount> {
   const db = await getDb();
   const curSql = currency ? " AND COALESCE(currency, 'SDG') = ?" : "";
   const invParams = currency ? [currency, customerId, customerId] : [customerId, customerId];
-  const res = await db.query(
-    `SELECT COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS c
-       FROM custom_invoices
-      WHERE type = 'sales' AND cancelled_at IS NULL${curSql}
-        AND (customer_id = ? OR (customer_id IS NULL AND party_name = (SELECT name FROM customers WHERE id = ? LIMIT 1)))`,
-    invParams
-  );
-  const invoicedTotal = Number(res.values?.[0]?.total) || 0;
+  const [res, custRes] = await Promise.all([
+    db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS c
+         FROM custom_invoices
+        WHERE type = 'sales' AND cancelled_at IS NULL${curSql}
+          AND (customer_id = ? OR (customer_id IS NULL AND LOWER(TRIM(party_name)) = (SELECT LOWER(TRIM(name)) FROM customers WHERE id = ? LIMIT 1)))`,
+      invParams
+    ),
+    db.query(
+      "SELECT COALESCE(opening_balance, 0) AS opening_balance, COALESCE(opening_balance_currency, 'SDG') AS opening_currency FROM customers WHERE id = ? LIMIT 1",
+      [customerId]
+    ),
+  ]);
+  const invoicedOnly = Number(res.values?.[0]?.total) || 0;
   const invoiceCount = Number(res.values?.[0]?.c) || 0;
+  const custRow = custRes.values?.[0];
+  const rawOpening = Number(custRow?.opening_balance) || 0;
+  const openingCur = sanitizeCurrency(custRow?.opening_currency, "SDG");
+  const openingApplicable = !currency || openingCur === currency ? rawOpening : 0;
+  const invoicedTotal = invoicedOnly + Math.max(0, openingApplicable);
 
   const payParams = currency ? [customerId, currency] : [customerId];
   const collectedRes = await db.query(
@@ -448,6 +461,293 @@ export async function getOpenSalesInvoices(limit = 200, currency?: AppCurrency):
     });
   }
   return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bank Account Statement (Bankak-Style Multi-Currency Ledger Read Model)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type BankStatementPeriod = "last5" | "7d" | "30d" | "90d" | "all";
+
+export interface BankStatementItem {
+  id: string;
+  direction: "in" | "out";
+  amount: number;
+  signedAmount: number;
+  runningBalance: number;
+  currency: AppCurrency;
+  occurredAt: string;
+  title: string;
+  subtitle?: string | undefined;
+  reference?: string | undefined;
+  sourceType: string;
+  accountId: string;
+  accountName: string;
+}
+
+export interface BankStatementReport {
+  currency: AppCurrency;
+  accountId: string | null;
+  accountName: string;
+  accountNumber?: string | undefined;
+  period: BankStatementPeriod;
+  currentBalance: number;
+  periodInflow: number;
+  periodOutflow: number;
+  totalCount: number;
+  items: BankStatementItem[];
+}
+
+function shiftIsoDateDays(isoDate: string, deltaDays: number): string {
+  const parts = isoDate.slice(0, 10).split("-").map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return isoDate.slice(0, 10);
+  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  return dt.toISOString().slice(0, 10);
+}
+
+function buildStatementDescription(row: any, direction: "in" | "out"): {
+  title: string;
+  subtitle?: string | undefined;
+} {
+  const sourceType = String(row.source_type ?? "");
+  const txNotes = row.notes ? String(row.notes).trim() : "";
+
+  if (sourceType === "customer_payment") {
+    const custName = row.customer_name ? String(row.customer_name).trim() : "";
+    const invRefs = row.cp_inv_refs ? String(row.cp_inv_refs).trim() : "";
+    const cpNotes = row.cp_notes ? String(row.cp_notes).trim() : txNotes;
+    const title = custName ? `تحصيل مبيعات — ${custName}` : "تحصيل فاتورة مبيعات";
+    const subParts = [invRefs ? `الفواتير: ${invRefs}` : "دفعة عميل", cpNotes].filter(Boolean);
+    return { title, subtitle: subParts.join(" · ") || undefined };
+  }
+
+  if (sourceType === "supplier_payment") {
+    const supName = row.supplier_name ? String(row.supplier_name).trim() : "";
+    const invRefs = row.sp_inv_refs ? String(row.sp_inv_refs).trim() : "";
+    const spNotes = row.sp_notes ? String(row.sp_notes).trim() : txNotes;
+    const title = supName ? `سداد مشتريات — ${supName}` : "سداد فاتورة مشتريات";
+    const subParts = [invRefs ? `الفواتير: ${invRefs}` : "دفعة مورد", spNotes].filter(Boolean);
+    return { title, subtitle: subParts.join(" · ") || undefined };
+  }
+
+  if (sourceType === "expense_payment") {
+    const expKind = row.exp_kind === "operating" ? "مصروف تشغيلي" : "مصروف مباشر";
+    const cat = row.exp_category ? String(row.exp_category).trim() : "";
+    const ben = row.exp_beneficiary ? String(row.exp_beneficiary).trim() : "";
+    const expNotes = row.exp_notes ? String(row.exp_notes).trim() : txNotes;
+    const label = [cat, ben].filter(Boolean).join(" — ");
+    const title = label ? `${expKind} — ${label}` : expKind;
+    return { title, subtitle: expNotes || undefined };
+  }
+
+  if (sourceType === "opening_balance") {
+    return {
+      title: "رصيد بنكي افتتاحي معتمد",
+      subtitle: txNotes || undefined,
+    };
+  }
+
+  if (sourceType === "bank_reconciliation") {
+    return {
+      title:
+        direction === "in"
+          ? "تغذية / إيداع خارجي — مطابقة الرصيد البنكي"
+          : "خصم / منصرف خارجي — مطابقة الرصيد البنكي",
+      subtitle: txNotes || undefined,
+    };
+  }
+
+  if (sourceType === "external_deposit") {
+    return {
+      title: "إيداع / تحويل خارجي وارد للحساب",
+      subtitle: txNotes || undefined,
+    };
+  }
+
+  if (sourceType === "external_withdrawal") {
+    return {
+      title: "سحب / عمولة بنكية خارجية",
+      subtitle: txNotes || undefined,
+    };
+  }
+
+  if (row.kind === "transfer_in" || row.kind === "transfer_out") {
+    const counterName = row.counter_account_name ? String(row.counter_account_name).trim() : "";
+    const title =
+      row.kind === "transfer_in"
+        ? counterName
+          ? `تحويل وارد من ${counterName}`
+          : "تحويل داخلي وارد"
+        : counterName
+        ? `تحويل صادر إلى ${counterName}`
+        : "تحويل داخلي صادر";
+    return { title, subtitle: txNotes || undefined };
+  }
+
+  return {
+    title: direction === "in" ? "إيداع بحساب البنك" : "خصم من حساب البنك",
+    subtitle: txNotes || undefined,
+  };
+}
+
+/**
+ * Builds an authoritative Bank Statement for a specific account or currency
+ * with chronological running balance, green (`in`) / red (`out`) semantics,
+ * and Bankak-style period filters (`last5`, `7d`, `30d`, `90d`, `all`).
+ */
+export async function getBankAccountStatement(input: {
+  currency: AppCurrency;
+  accountId?: string;
+  period?: BankStatementPeriod;
+  today?: string;
+}): Promise<BankStatementReport> {
+  const db = await getDb();
+  const currency = sanitizeCurrency(input.currency, "SDG");
+  const period: BankStatementPeriod = input.period ?? "last5";
+  const today = input.today ?? getLocalIsoDate();
+
+  const allReports = await getAccountBalances();
+  const targetReports = input.accountId
+    ? allReports.filter((r) => r.account.id === input.accountId)
+    : allReports.filter((r) => sanitizeCurrency(r.account.currency, "SDG") === currency);
+
+  const primaryAccount = targetReports[0]?.account;
+  const openingSum = round2(targetReports.reduce((s, r) => s + (r.account.openingBalance || 0), 0));
+  const currentBalance = round2(targetReports.reduce((s, r) => s + r.balance, 0));
+
+  const whereClause = input.accountId
+    ? "WHERE t.account_id = ? AND (t.reversed_by IS NULL OR t.reversed_by = '') AND COALESCE(t.currency, a.currency, 'SDG') = ?"
+    : "WHERE (t.reversed_by IS NULL OR t.reversed_by = '') AND COALESCE(t.currency, a.currency, 'SDG') = ? AND a.is_active = 1";
+  const params = input.accountId ? [input.accountId, currency] : [currency];
+
+  const res = await db.query(
+    `SELECT
+       t.id, t.kind, t.amount, t.occurred_at, t.account_id, t.counter_account_id,
+       t.source_type, t.source_id, t.reference_note, t.notes, t.created_at,
+       COALESCE(t.currency, a.currency, 'SDG') AS resolved_currency,
+       a.name AS account_name,
+       ca.name AS counter_account_name,
+       cp.notes AS cp_notes,
+       cust.name AS customer_name,
+       cp_inv.inv_refs AS cp_inv_refs,
+       sp.notes AS sp_notes,
+       sup.name AS supplier_name,
+       sp_inv.inv_refs AS sp_inv_refs,
+       exp.kind AS exp_kind,
+       exp.category AS exp_category,
+       exp.beneficiary AS exp_beneficiary,
+       exp.notes AS exp_notes
+     FROM financial_transactions t
+     JOIN financial_accounts a ON a.id = t.account_id
+     LEFT JOIN financial_accounts ca ON ca.id = t.counter_account_id
+     LEFT JOIN customer_payments cp ON t.source_type = 'customer_payment' AND cp.id = t.source_id
+     LEFT JOIN customers cust ON cust.id = cp.customer_id
+     LEFT JOIN (
+       SELECT cpa.payment_id, GROUP_CONCAT(COALESCE(ci.reference, ci.serial), '، ') AS inv_refs
+         FROM customer_payment_allocations cpa
+         JOIN custom_invoices ci ON ci.id = cpa.invoice_id
+        GROUP BY cpa.payment_id
+     ) cp_inv ON cp_inv.payment_id = cp.id
+     LEFT JOIN supplier_payments sp ON t.source_type = 'supplier_payment' AND sp.id = t.source_id
+     LEFT JOIN suppliers sup ON sup.id = sp.supplier_id
+     LEFT JOIN (
+       SELECT spa.payment_id, GROUP_CONCAT(COALESCE(ci.reference, ci.serial), '، ') AS inv_refs
+         FROM supplier_payment_allocations spa
+         JOIN custom_invoices ci ON ci.id = spa.invoice_id
+        GROUP BY spa.payment_id
+     ) sp_inv ON sp_inv.payment_id = sp.id
+     LEFT JOIN expense_payments ep ON t.source_type = 'expense_payment' AND ep.id = t.source_id
+     LEFT JOIN expenses exp ON exp.id = ep.expense_id
+     ${whereClause}
+     ORDER BY t.occurred_at ASC, t.created_at ASC, t.rowid ASC`,
+    params
+  );
+
+  const chronological: BankStatementItem[] = [];
+  let running = openingSum;
+
+  if (Math.abs(openingSum) > 0.009 && primaryAccount) {
+    const dir: "in" | "out" = openingSum >= 0 ? "in" : "out";
+    const absOpen = Math.abs(openingSum);
+    chronological.push({
+      id: `opening-${primaryAccount.id}`,
+      direction: dir,
+      amount: absOpen,
+      signedAmount: openingSum,
+      runningBalance: running,
+      currency,
+      occurredAt: String(primaryAccount.createdAt || today).slice(0, 10),
+      title: "رصيد افتتاحي تأسيسي",
+      subtitle: primaryAccount.name,
+      reference: "OPENING",
+      sourceType: "opening_balance",
+      accountId: primaryAccount.id,
+      accountName: primaryAccount.name,
+    });
+  }
+
+  for (const row of res.values ?? []) {
+    const kind = String(row.kind) as LedgerKind;
+    const direction: "in" | "out" = kind === "receipt" || kind === "transfer_in" ? "in" : "out";
+    const amount = round2(Math.abs(Number(row.amount) || 0));
+    const signedAmount = direction === "in" ? amount : -amount;
+    running = round2(running + signedAmount);
+    const { title, subtitle } = buildStatementDescription(row, direction);
+
+    chronological.push({
+      id: String(row.id),
+      direction,
+      amount,
+      signedAmount,
+      runningBalance: running,
+      currency,
+      occurredAt: String(row.occurred_at ?? "").slice(0, 10),
+      title,
+      subtitle,
+      reference: row.reference_note ? String(row.reference_note) : undefined,
+      sourceType: String(row.source_type ?? kind),
+      accountId: String(row.account_id),
+      accountName: String(row.account_name ?? ""),
+    });
+  }
+
+  const newestFirst = [...chronological].reverse();
+  let filtered: BankStatementItem[];
+  if (period === "last5") {
+    filtered = newestFirst.slice(0, 5);
+  } else if (period === "7d") {
+    const cutoff = shiftIsoDateDays(today, -7);
+    filtered = newestFirst.filter((item) => item.occurredAt >= cutoff);
+  } else if (period === "30d") {
+    const cutoff = shiftIsoDateDays(today, -30);
+    filtered = newestFirst.filter((item) => item.occurredAt >= cutoff);
+  } else if (period === "90d") {
+    const cutoff = shiftIsoDateDays(today, -90);
+    filtered = newestFirst.filter((item) => item.occurredAt >= cutoff);
+  } else {
+    filtered = newestFirst;
+  }
+
+  const periodInflow = round2(
+    filtered.reduce((s, item) => s + (item.direction === "in" ? item.amount : 0), 0)
+  );
+  const periodOutflow = round2(
+    filtered.reduce((s, item) => s + (item.direction === "out" ? item.amount : 0), 0)
+  );
+
+  return {
+    currency,
+    accountId: input.accountId ?? primaryAccount?.id ?? null,
+    accountName: primaryAccount?.name ?? `حساب ${currency}`,
+    accountNumber: primaryAccount?.accountNumber,
+    period,
+    currentBalance,
+    periodInflow,
+    periodOutflow,
+    totalCount: newestFirst.length,
+    items: filtered,
+  };
 }
 
 export type { LedgerEntry };

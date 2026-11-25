@@ -173,6 +173,64 @@ describe("Retention planner", () => {
     // Manual snapshots are NEVER pruned
     expect(plan.keep.filter((n) => n.includes("-man")).length).toBe(15);
   });
+
+  it("prunes automated backups older than maxAgeDays (30-day rolling window) while keeping manual snapshots intact", () => {
+    const nowMs = Date.parse("2026-11-21T12:00:00.000Z");
+    const files = [
+      file("daily", "2026-11-20T08:00:00.000Z", "recent-daily"),
+      file("transaction", "2026-11-18T10:00:00.000Z", "recent-tx"),
+      file("daily", "2026-10-10T08:00:00.000Z", "old-daily"), // 42 days old
+      file("weekly", "2026-09-25T08:00:00.000Z", "old-weekly"), // 57 days old
+      file("transaction", "2026-10-05T08:00:00.000Z", "old-tx"), // 47 days old
+      file("pre-update", "2026-10-01T08:00:00.000Z", "old-preup"), // 51 days old
+      file("manual", "2026-06-01T08:00:00.000Z", "old-manual"), // 173 days old -> MUST stay!
+    ];
+    const plan = planRetention(files, { daily: 30, weekly: 4, monthly: 1, keepMinimum: 2, maxAgeDays: 30 }, UTC, nowMs);
+
+    expect(plan.keep).toContain("ta-backup-recent-daily.tabk");
+    expect(plan.keep).toContain("ta-backup-recent-tx.tabk");
+    expect(plan.keep).toContain("ta-backup-old-manual.tabk");
+    expect(plan.prune).toEqual([
+      "ta-backup-old-weekly.tabk",
+      "ta-backup-old-preup.tabk",
+      "ta-backup-old-tx.tabk",
+      "ta-backup-old-daily.tabk",
+    ]);
+  });
+
+  it("still protects keepMinimum newest verified backups even when ALL backups are older than maxAgeDays", () => {
+    const nowMs = Date.parse("2026-11-21T12:00:00.000Z");
+    const files = [
+      file("daily", "2026-09-01T08:00:00.000Z", "old1"),
+      file("daily", "2026-09-10T08:00:00.000Z", "old2"),
+      file("daily", "2026-09-20T08:00:00.000Z", "old3"),
+      file("daily", "2026-09-30T08:00:00.000Z", "old4"),
+    ];
+    const plan = planRetention(files, { daily: 30, weekly: 4, monthly: 1, keepMinimum: 2, maxAgeDays: 30 }, UTC, nowMs);
+
+    // Must never wipe the folder empty — newest 2 survive!
+    expect(plan.keep).toEqual(["ta-backup-old4.tabk", "ta-backup-old3.tabk"]);
+    expect(plan.prune).toEqual(["ta-backup-old1.tabk", "ta-backup-old2.tabk"]);
+  });
+
+  it("compacts past-day (>24h) transaction backups down to the newest 1 per day when maxAgeDays is active", () => {
+    const nowMs = Date.parse("2026-11-21T12:00:00.000Z");
+    const files = [
+      // Today (<24h): both kept
+      file("transaction", "2026-11-21T11:00:00.000Z", "today-2"),
+      file("transaction", "2026-11-21T09:00:00.000Z", "today-1"),
+      // 3 days ago (>24h): 3 copies on same calendar day -> keep newest only (past-3)
+      file("transaction", "2026-11-18T18:00:00.000Z", "past-3"),
+      file("transaction", "2026-11-18T14:00:00.000Z", "past-2"),
+      file("transaction", "2026-11-18T08:00:00.000Z", "past-1"),
+    ];
+    const plan = planRetention(files, { daily: 30, weekly: 4, monthly: 1, keepMinimum: 2, maxAgeDays: 30 }, UTC, nowMs);
+
+    expect(plan.keep).toContain("ta-backup-today-2.tabk");
+    expect(plan.keep).toContain("ta-backup-today-1.tabk");
+    expect(plan.keep).toContain("ta-backup-past-3.tabk");
+    expect(plan.prune).toEqual(["ta-backup-past-1.tabk", "ta-backup-past-2.tabk"]);
+  });
 });
 
 describe("Scheduled backup de-duplication", () => {

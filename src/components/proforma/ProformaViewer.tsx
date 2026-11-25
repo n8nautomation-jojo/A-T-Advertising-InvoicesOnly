@@ -80,7 +80,7 @@ export function ProformaViewer({ invoice, isVisible = true }: Props) {
             <div className="flex flex-col w-full h-full min-h-0">
               <div className="flex-1 min-h-0 w-full overflow-hidden">
                 <TransformComponent
-                  wrapperStyle={{ width: "100%", height: "100%", overflow: "hidden" }}
+                  wrapperStyle={{ width: "100%", height: "100%", overflow: "hidden", touchAction: "none" }}
                   contentStyle={{
                     display: "flex",
                     alignItems: "center",

@@ -218,7 +218,7 @@ export function LetterIssuerDialog({ open, onOpenChange, initialRecipientName }:
 
         {/* 2. المحتوى النشط */}
         {activeTab === "edit" && (
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 scroll-smooth touch-pan-y min-h-0">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 min-h-0">
             <LetterEditorForm
               letter={letter}
               onChange={handlePatch}
@@ -254,7 +254,7 @@ export function LetterIssuerDialog({ open, onOpenChange, initialRecipientName }:
         )}
 
         {activeTab === "archive" && (
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 scroll-smooth touch-pan-y min-h-0">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 min-h-0">
             <LetterArchiveList
               letters={savedLetters}
               onOpenEdit={(item) => {

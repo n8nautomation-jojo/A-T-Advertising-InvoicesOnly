@@ -3,4 +3,4 @@ declare const __APP_VERSION__: string | undefined;
 export const APP_VERSION: string =
   typeof __APP_VERSION__ === "string" && __APP_VERSION__.trim().length > 0
     ? __APP_VERSION__
-    : "2.3.2-lifetime";
+    : "2.3.3-lifetime";

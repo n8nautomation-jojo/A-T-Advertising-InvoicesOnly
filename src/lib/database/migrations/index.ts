@@ -26,8 +26,9 @@ import { V4_VERSION, applyV4 } from "./v4Currency";
 import { V5_VERSION, applyV5 } from "./v5CustomerModule";
 import { V6_VERSION, applyV6MultiCurrency } from "./v6MultiCurrency";
 import { V7_VERSION, applyV7OfficialLetters } from "./v7OfficialLetters";
+import { V8_VERSION, applyV8MultiCurrencyAccounts } from "./v8MultiCurrencyAccounts";
 
-export const SCHEMA_VERSION = V7_VERSION;
+export const SCHEMA_VERSION = V8_VERSION;
 
 export interface MigrationOutcome {
   from: number;
@@ -201,6 +202,20 @@ export async function runPendingMigrations(
     }
   }
 
+  if (!haltUpgrade && outcome.from < V8_VERSION) {
+    try {
+      const v8 = await applyV8MultiCurrencyAccounts(db, nowIso);
+      await setStoredSchemaVersion(db, V8_VERSION, nowIso);
+      outcome.applied.push(
+        `v8 (4-currency accounts: columns=${v8.columnsAdded.length}, seeded=${v8.accountsSeeded})`
+      );
+    } catch (err) {
+      haltUpgrade = true;
+      outcome.warnings.push(`v8: ${String(err)}`);
+      console.error("[Migration] v8 failed; version left unchanged for a retry:", err);
+    }
+  }
+
   outcome.to = await getStoredSchemaVersion(db);
   return outcome;
 }
@@ -217,5 +232,5 @@ export async function backfillReferencesOnly(
   return report;
 }
 
-export { V2_VERSION, V3_VERSION, V4_VERSION, V5_VERSION, V6_VERSION, V7_VERSION };
+export { V2_VERSION, V3_VERSION, V4_VERSION, V5_VERSION, V6_VERSION, V7_VERSION, V8_VERSION };
 export type { MigrationDatabase };

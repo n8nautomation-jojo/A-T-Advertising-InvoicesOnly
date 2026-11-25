@@ -94,12 +94,18 @@ async function defaultAccount(): Promise<string> {
   return id;
 }
 
-describe("Default account (PRD §13.2, §10)", () => {
-  it("is seeded by the migration so money can be recorded immediately", async () => {
+describe("Default accounts (PRD §13.2, §10 — Schema v8 4-Currency Treasury)", () => {
+  it("seeds canonical accounts for SDG, USD, SAR, and EGP at zero balance so money can be recorded immediately in any currency", async () => {
     const accounts = await getAccountBalances();
-    expect(accounts.length).toBe(1);
-    expect(accounts[0].account.kind).toBe("cash");
-    expect(accounts[0].balance).toBe(0);
+    expect(accounts.length).toBe(4);
+    expect(accounts.map((a) => a.account.currency).sort()).toEqual(["EGP", "SAR", "SDG", "USD"]);
+    const sdg = accounts.find((a) => a.account.currency === "SDG")!;
+    expect(sdg.account.id).toBe("acc-cash-default");
+    expect(sdg.account.kind).toBe("cash");
+    expect(sdg.account.accountNumber).toBe("3283046");
+    for (const report of accounts) {
+      expect(report.balance).toBe(0);
+    }
   });
 });
 

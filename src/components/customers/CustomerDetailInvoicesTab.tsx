@@ -166,7 +166,7 @@ export function CustomerDetailInvoicesTab({
       </div>
 
       {/* تبويبات الفلترة حسب الحالة مع أعداد حية */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none touch-pan-x overscroll-x-contain select-none">
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none overscroll-x-contain select-none">
         {[
           { key: "all" as const, label: `كل الفواتير (${invoiceStatusCounts.all})` },
           { key: "unpaid" as const, label: `غير مسددة (${invoiceStatusCounts.unpaid})` },
@@ -232,7 +232,7 @@ export function CustomerDetailInvoicesTab({
         </div>
       ) : invoiceViewMode === "table" ? (
         <div className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs">
-          <div className="overflow-x-auto max-h-[640px] overscroll-contain touch-pan-x">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full text-right text-xs">
               <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs text-muted-foreground text-[11px] border-b border-border/70 z-10 shadow-xs">
                 <tr>

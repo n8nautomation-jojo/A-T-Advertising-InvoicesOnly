@@ -54,6 +54,8 @@ interface NativePluginApi {
     errorCode?: string;
     message?: string;
   }>;
+  pruneBackups(): Promise<{ ok: boolean; pruned?: string[]; prunedCount?: number; errorCode?: string; message?: string }>;
+  scheduleImmediateCatchUp(): Promise<{ ok: boolean }>;
 }
 
 interface NativeStatus {
@@ -78,8 +80,14 @@ export const BACKUP_PLUGIN_NAME = "TaBackup";
 
 export function isBackupEngineAvailable(): boolean {
   if (!Capacitor.isNativePlatform()) return false;
-  const core = Capacitor as unknown as { Plugins?: Record<string, unknown> };
-  return Boolean(core.Plugins?.[BACKUP_PLUGIN_NAME]);
+  const cap = Capacitor as unknown as {
+    isPluginAvailable?: (name: string) => boolean;
+    Plugins?: Record<string, unknown>;
+  };
+  if (typeof cap.isPluginAvailable === "function" && cap.isPluginAvailable(BACKUP_PLUGIN_NAME)) {
+    return true;
+  }
+  return Boolean(cap.Plugins?.[BACKUP_PLUGIN_NAME]);
 }
 
 /** Defensively normalizes legacy Java StorageState enum values into canonical TS states (DB-07). */
@@ -154,6 +162,8 @@ const NATIVE_COMMANDS = [
   "getEncryptionInfo",
   "preparePreUpdateBackup",
   "ensureDatabaseHealthy",
+  "pruneBackups",
+  "scheduleImmediateCatchUp",
 ] as const;
 
 /**
@@ -346,6 +356,14 @@ export const backupBridge = {
     message?: string;
   }> {
     return callNative("ensureDatabaseHealthy", { forceRepair: Boolean(options?.forceRepair) });
+  },
+
+  async pruneBackups(): Promise<{ ok: boolean; pruned?: string[]; prunedCount?: number; errorCode?: string; message?: string }> {
+    return callNative("pruneBackups");
+  },
+
+  async scheduleImmediateCatchUp(): Promise<{ ok: boolean }> {
+    return callNative("scheduleImmediateCatchUp");
   },
 };
 

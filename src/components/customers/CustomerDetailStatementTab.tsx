@@ -365,7 +365,7 @@ export function CustomerDetailStatementTab({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto max-h-[420px] overscroll-contain touch-pan-x">
+                <div className="overflow-x-auto overscroll-x-contain">
                   <table className="w-full text-right text-xs">
                     <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs text-muted-foreground text-[11px] border-b border-border/70 z-10 shadow-xs">
                       <tr>
@@ -445,7 +445,7 @@ export function CustomerDetailStatementTab({
         </div>
       ) : (
         <div className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs">
-          <div className="overflow-x-auto max-h-[640px] overscroll-contain touch-pan-x">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full text-right text-xs">
               <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs text-muted-foreground text-[11px] border-b border-border/70 z-10 shadow-xs">
                 <tr>

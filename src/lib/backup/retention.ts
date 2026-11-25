@@ -114,7 +114,12 @@ export const MAX_SAFETY_BACKUPS = 5;
  * Within a kept day/week/month only the newest file survives; older files of
  * the same period are duplicates of the same data and are pruned.
  */
-export function planRetention(backups: BackupFileInfo[], policy: RetentionPolicy, timeZoneOffsetMinutes: number): RetentionDecision {
+export function planRetention(
+  backups: BackupFileInfo[],
+  policy: RetentionPolicy,
+  timeZoneOffsetMinutes: number,
+  nowMs: number = Date.now()
+): RetentionDecision {
   const candidates = toCandidates(backups);
   const calendarOf = (c: Candidate) => localCalendar(c.createdAt, timeZoneOffsetMinutes);
 
@@ -151,15 +156,42 @@ export function planRetention(backups: BackupFileInfo[], policy: RetentionPolicy
   applyLane(weekly, policy.weekly);
   applyLane(monthly, policy.monthly);
 
+  const hasRollingWindow = typeof policy.maxAgeDays === "number" && policy.maxAgeDays > 0;
+  if (hasRollingWindow) {
+    // Smart compaction for transaction backups older than 24h: keep only the newest 1 per past local calendar day.
+    const recentTxCutoffMs = nowMs - 86_400_000;
+    const olderTxByDay = groupBy(
+      transactions.filter((c) => c.createdAtMs < recentTxCutoffMs),
+      (c) => dailyKey(calendarOf(c))
+    );
+    for (const members of olderTxByDay.values()) {
+      for (let i = 1; i < members.length; i++) {
+        prune.add(members[i].fileName);
+      }
+    }
+  }
+
   // Bounded caps for transaction and safety backups (newest-first, prune oldest excess).
-  for (let i = MAX_TRANSACTION_BACKUPS; i < transactions.length; i++) {
-    prune.add(transactions[i].fileName);
+  const survivingTransactions = hasRollingWindow
+    ? transactions.filter((c) => !prune.has(c.fileName))
+    : transactions;
+  for (let i = MAX_TRANSACTION_BACKUPS; i < survivingTransactions.length; i++) {
+    prune.add(survivingTransactions[i].fileName);
   }
   for (let i = MAX_SAFETY_BACKUPS; i < preRestore.length; i++) {
     prune.add(preRestore[i].fileName);
   }
   for (let i = MAX_SAFETY_BACKUPS; i < preUpdate.length; i++) {
     prune.add(preUpdate[i].fileName);
+  }
+
+  if (hasRollingWindow) {
+    const cutoffMs = nowMs - policy.maxAgeDays! * 86_400_000;
+    for (const c of candidates) {
+      if (!ALWAYS_KEEP_KINDS.has(c.kind) && c.createdAtMs < cutoffMs) {
+        prune.add(c.fileName);
+      }
+    }
   }
 
   // Invariant: the newest keepMinimum files of ANY kind are never pruned.

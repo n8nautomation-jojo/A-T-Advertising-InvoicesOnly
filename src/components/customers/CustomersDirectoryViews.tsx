@@ -150,7 +150,7 @@ export function CustomersDirectoryTable({
 }: CustomersDirectoryViewProps) {
   return (
     <div className="hidden md:block rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs">
-      <div className="overflow-x-auto max-h-[640px] overscroll-contain">
+      <div className="overflow-x-auto overscroll-x-contain">
         {totalMatchedCount === 0 ? (
           <div className="py-14 text-center text-xs font-bold text-muted-foreground border border-dashed border-border/70 rounded-2xl m-4">
             لا يوجد عملاء يطابقون معايير البحث

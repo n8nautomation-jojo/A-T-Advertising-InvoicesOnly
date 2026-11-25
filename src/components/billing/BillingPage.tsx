@@ -3,6 +3,7 @@ import { PageShell } from "@/components/layout/PageShell";
 import { BillingCards } from "./BillingCards";
 import { BillingArchiveTable } from "./BillingArchiveTable";
 import { ReceiptDialog } from "@/components/finance/ReceiptDialog";
+import { SupplierPaymentDialog } from "@/components/finance/SupplierPaymentDialog";
 import { CustomInvoiceDialog } from "./CustomInvoiceDialog";
 import { useCustomInvoices } from "@/lib/billing/store";
 import type { CustomInvoice, CustomInvoiceType } from "@/lib/billing/types";
@@ -22,6 +23,7 @@ export function BillingPage() {
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [letterDialogOpen, setLetterDialogOpen] = useState(false);
   const [receiptInvoiceId, setReceiptInvoiceId] = useState<string | null>(null);
+  const [supplierPaymentInvoiceId, setSupplierPaymentInvoiceId] = useState<string | null>(null);
   const [dialogType, setDialogType] = useState<CustomInvoiceType>("sales");
   const [editingCustomInvoice, setEditingCustomInvoice] = useState<CustomInvoice | null>(null);
 
@@ -45,7 +47,7 @@ export function BillingPage() {
   return (
     <PageShell>
       <main
-        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-5 min-w-0 scroll-smooth touch-pan-y pb-36 md:pb-16"
+        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-36 md:pb-16"
         dir="rtl"
       >
         <div className="mx-auto max-w-7xl space-y-3 sm:space-y-4 w-full max-w-full">
@@ -98,6 +100,7 @@ export function BillingPage() {
               onEditProforma={(proforma) => setEditingProformaInvoice(proforma)}
               onPreviewProforma={(proforma) => setPreviewProformaInvoice(proforma)}
               onRecordPayment={(invoiceId) => setReceiptInvoiceId(invoiceId)}
+              onRecordPurchasePayment={(invoiceId) => setSupplierPaymentInvoiceId(invoiceId)}
               onPreviewCalc={(calc) => setPreviewCalcInvoice(calc)}
               onCreateNew={handleOpenCreate}
             />
@@ -107,6 +110,12 @@ export function BillingPage() {
             open={Boolean(receiptInvoiceId)}
             onOpenChange={(open) => !open && setReceiptInvoiceId(null)}
             initialInvoiceId={receiptInvoiceId}
+          />
+
+          <SupplierPaymentDialog
+            open={Boolean(supplierPaymentInvoiceId)}
+            onOpenChange={(open) => !open && setSupplierPaymentInvoiceId(null)}
+            initialInvoiceId={supplierPaymentInvoiceId}
           />
 
           <CustomInvoiceDialog

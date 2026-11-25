@@ -162,7 +162,7 @@ export function SuppliersPage() {
   return (
     <PageShell>
       <main
-        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-5 min-w-0 scroll-smooth touch-pan-y pb-36 md:pb-16"
+        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-36 md:pb-16"
         dir="rtl"
       >
         <div className="mx-auto max-w-7xl space-y-3.5 w-full">

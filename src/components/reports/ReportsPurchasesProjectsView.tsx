@@ -65,7 +65,7 @@ export function ReportsPurchasesProjectsView({
           {!purchases?.purchases?.length ? (
             <p className="py-3 text-center text-xs text-muted-foreground">لا توجد فواتير شراء في هذه الفترة.</p>
           ) : (
-            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-56 overflow-y-auto overscroll-y-auto pr-1">
               {purchases.purchases.map((row) => (
                 <div
                   key={row.id}
@@ -113,7 +113,7 @@ export function ReportsPurchasesProjectsView({
           {!purchases?.supplierPayments?.length ? (
             <p className="py-3 text-center text-xs text-muted-foreground">لا توجد دفعات مسجلة للموردين في هذه الفترة.</p>
           ) : (
-            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-56 overflow-y-auto overscroll-y-auto pr-1">
               {purchases.supplierPayments.map((p) => (
                 <div
                   key={p.id}
@@ -149,7 +149,7 @@ export function ReportsPurchasesProjectsView({
           {!purchases?.directExpenses?.length ? (
             <p className="py-3 text-center text-xs text-muted-foreground">لا توجد تكاليف مباشرة مسجلة في هذه الفترة.</p>
           ) : (
-            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-56 overflow-y-auto overscroll-y-auto pr-1">
               {purchases.directExpenses.map((exp) => (
                 <div
                   key={exp.id}
@@ -215,7 +215,7 @@ export function ReportsPurchasesProjectsView({
         {!cash?.lines?.length ? (
           <p className="py-3 text-center text-xs text-muted-foreground">لا توجد حركات نقدية مسجلة في هذه الفترة.</p>
         ) : (
-          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+          <div className="space-y-1.5 max-h-72 overflow-y-auto overscroll-y-auto pr-1">
             {cash.lines.slice(0, 60).map((line) => (
               <div
                 key={line.id}

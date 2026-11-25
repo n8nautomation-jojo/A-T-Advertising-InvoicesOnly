@@ -42,7 +42,7 @@ function PageShellInner({ children }: { children: ReactNode }) {
       <AppSidebar />
       <div
         dir="rtl"
-        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-full min-w-0 flex-1 flex-col overflow-hidden bg-background font-display text-foreground touch-pan-y"
+        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-full min-w-0 flex-1 flex-col overflow-hidden bg-background font-display text-foreground"
         style={safeAreaStyle}
       >
         <AppHeader />

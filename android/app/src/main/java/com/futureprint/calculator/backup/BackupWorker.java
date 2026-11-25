@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
@@ -31,6 +32,7 @@ import org.json.JSONObject;
 public class BackupWorker extends Worker {
 
     public static final String WORK_NAME = "ta_backup_daily";
+    public static final String CATCHUP_WORK_NAME = "ta_backup_catchup";
     private static final String TAG = "BackupWorker";
     private static final String CHANNEL_ID = "ta_backup_alerts";
     private static final int NOTIFICATION_ID = 4711;
@@ -44,6 +46,13 @@ public class BackupWorker extends Worker {
     public Result doWork() {
         Context ctx = getApplicationContext();
         try {
+            SharedPreferences prefs = BackupEngine.prefs(ctx);
+            boolean autoDaily = prefs.getBoolean("auto_daily", true);
+            boolean afterTransaction = prefs.getBoolean("after_transaction", true);
+            if (!autoDaily && !afterTransaction) {
+                return Result.success();
+            }
+
             BackupEngine engine = new BackupEngine(ctx);
             JSONObject status = engine.status();
             JSONObject storage = status.optJSONObject("storage");
@@ -52,11 +61,12 @@ public class BackupWorker extends Worker {
             if ("ok".equals(state) && storage != null) {
                 int offset = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000;
                 List<BackupEngine.FileRecord> records = engine.listRecords();
-                String kind = pickKind(records, offset);
+                String kind = autoDaily ? pickKind(records, offset) : "transaction";
+                boolean encryptEnabled = prefs.getBoolean("encryption_enabled", false);
                 JSONObject options = new JSONObject();
                 options.put("kind", kind);
-                options.put("skipIfUnchanged", true);
-                options.put("encrypt", true);
+                options.put("skipIfUnchanged", !records.isEmpty());
+                options.put("encrypt", encryptEnabled);
                 JSONObject result = engine.createBackup(options);
                 if (!result.optBoolean("ok", false)) {
                     notifyFailure(ctx, result.optString("message", "فشل النسخ الاحتياطي التلقائي."));

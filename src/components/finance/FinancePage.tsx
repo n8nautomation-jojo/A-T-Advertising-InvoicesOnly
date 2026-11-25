@@ -35,6 +35,7 @@ import {
 import { cancelPayment } from "@/lib/repositories/PaymentRepository";
 import {
   LEDGER_KIND_LABELS,
+  LEDGER_SOURCE_LABELS,
   PAYMENT_METHOD_LABELS,
   type AccountBalanceReport,
   type AccountKind,
@@ -50,6 +51,7 @@ import { ReceiptDialog } from "./ReceiptDialog";
 import { SupplierPaymentDialog } from "./SupplierPaymentDialog";
 import { TransferDialog } from "./TransferDialog";
 import { ExpenseDialog } from "./ExpenseDialog";
+import { BankBalanceGreetingWidget } from "./BankBalanceGreetingWidget";
 import {
   CancelPaymentAlertDialog,
   List,
@@ -205,7 +207,7 @@ export function FinancePage() {
   return (
     <PageShell>
       <main
-        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-5 min-w-0 scroll-smooth touch-pan-y pb-36 md:pb-16"
+        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-36 md:pb-16"
         dir="rtl"
       >
         <div className="mx-auto max-w-7xl space-y-3.5 w-full">
@@ -237,7 +239,15 @@ export function FinancePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap self-end sm:self-center">
+            <div className="flex items-center gap-2.5 flex-wrap self-end sm:self-center">
+              <BankBalanceGreetingWidget
+                syncedCurrency={currency}
+                onCurrencySelected={(c) => {
+                  setCurrency(c);
+                  setNewAccountCurrency(c);
+                }}
+                compact
+              />
               <CurrencySelector
                 label="العملة:"
                 dropdownTitle="اختر عملة العرض"
@@ -467,16 +477,21 @@ export function FinancePage() {
                   <List
                     items={movements}
                     emptyLabel="لا توجد حركات مالية بعد."
-                    render={(row) => ({
-                      key: row.id,
-                      title: `${LEDGER_KIND_LABELS[row.kind]} · ${row.accountName}`,
-                      subtitle: `${row.occurredAt}${row.reference ? ` · ${row.reference}` : ""}${
-                        row.reversed ? " · ملغاة" : ""
-                      }`,
-                      amount: row.kind === "receipt" || row.kind === "transfer_in" ? row.amount : -row.amount,
-                      currency: row.currency,
-                      muted: row.reversed,
-                    })}
+                    render={(row) => {
+                      const sourceLabel = row.sourceType
+                        ? LEDGER_SOURCE_LABELS[row.sourceType] ?? LEDGER_KIND_LABELS[row.kind]
+                        : LEDGER_KIND_LABELS[row.kind];
+                      return {
+                        key: row.id,
+                        title: `${sourceLabel} · ${row.accountName}`,
+                        subtitle: `${row.occurredAt}${row.reference ? ` · ${row.reference}` : ""}${
+                          row.notes ? ` · ${row.notes}` : ""
+                        }${row.reversed ? " · ملغاة" : ""}`,
+                        amount: row.kind === "receipt" || row.kind === "transfer_in" ? row.amount : -row.amount,
+                        currency: row.currency,
+                        muted: row.reversed,
+                      };
+                    }}
                   />
                 </TabsContent>
               </Tabs>

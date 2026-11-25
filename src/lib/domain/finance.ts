@@ -41,15 +41,42 @@ export const LEDGER_KIND_LABELS: Record<LedgerKind, string> = {
   transfer_out: "تحويل صادر",
 };
 
+export const LEDGER_SOURCE_LABELS: Record<string, string> = {
+  customer_payment: "تحصيل فاتورة / عميل",
+  supplier_payment: "سداد فاتورة مشتريات / مورد",
+  expense_payment: "سداد مصروف",
+  opening_balance: "رصيد بنكي افتتاحي",
+  bank_reconciliation: "مطابقة وتحديث رصيد بنكي",
+  external_deposit: "إيداع / تحويل خارجي وارد",
+  external_withdrawal: "سحب / عمولة بنكية خارجية",
+  transfer: "تحويل داخلي بين الحسابات",
+};
+
 export interface FinancialAccount {
   id: string;
   name: string;
   kind: AccountKind;
   currency?: import("@/lib/currency/types").AppCurrency | undefined;
+  accountNumber?: string | undefined;
   openingBalance: number;
   isActive: boolean;
   notes?: string | undefined;
   createdAt: string;
+}
+
+/**
+ * Selects the best active account for a given currency:
+ * prefers an active `bank` account when available, otherwise the first active account of that currency.
+ */
+export function getPreferredAccountForCurrency(
+  accounts: FinancialAccount[],
+  currency: string
+): FinancialAccount | undefined {
+  const matching = accounts.filter(
+    (a) => a.isActive && (a.currency ?? "SDG") === currency
+  );
+  if (matching.length === 0) return undefined;
+  return matching.find((a) => a.kind === "bank") ?? matching[0];
 }
 
 export interface LedgerEntry {
@@ -186,17 +213,18 @@ export function validateAllocations(
  */
 export interface ExistingPaymentFingerprint {
   amount: number;
+  currency?: string | undefined;
   paidAt: string;
   method: string;
   invoiceIds: string[];
 }
 
 export function looksLikeDuplicatePayment(
-  candidate: { amount: number; paidAt: string; method: string; invoiceIds: string[] },
+  candidate: { amount: number; currency?: string | undefined; paidAt: string; method: string; invoiceIds: string[] },
   existing: ExistingPaymentFingerprint[]
 ): boolean {
-  const key = (p: { amount: number; paidAt: string; method: string; invoiceIds: string[] }) =>
-    `${round2(p.amount)}|${p.paidAt}|${p.method}|${[...p.invoiceIds].sort().join(",")}`;
+  const key = (p: { amount: number; currency?: string | undefined; paidAt: string; method: string; invoiceIds: string[] }) =>
+    `${p.currency ?? "SDG"}|${round2(p.amount)}|${p.paidAt}|${p.method}|${[...p.invoiceIds].sort().join(",")}`;
   const candidateKey = key(candidate);
   return existing.some((entry) => key(entry) === candidateKey);
 }

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Search,
   FileText,
@@ -7,6 +7,7 @@ import {
   Calculator,
   UserCheck,
   UserPlus,
+  ChevronDown,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -33,7 +34,7 @@ import {
   useCustomers,
   type CustomerRecord,
 } from "@/lib/customersStore";
-import { findCustomerByNormalizedName } from "@/lib/customers/customerMatching";
+import { normalizeCustomerName } from "@/lib/customers/customerMatching";
 import { deleteProformaInvoice } from "@/lib/proforma/store";
 import { deleteInvoice } from "@/lib/invoicesStore";
 import { getLocalIsoDate } from "@/lib/dateUtils";
@@ -50,6 +51,8 @@ import { settlementFor, useSettlementVersion } from "@/lib/financeStore";
 import type { UnifiedInvoiceRecord } from "@/components/invoices/types";
 import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 
+const ARCHIVE_PAGE_CHUNK = 50;
+
 interface Props {
   invoices?: CustomInvoice[];
   onEditCustom: (invoice: CustomInvoice) => void;
@@ -57,6 +60,7 @@ interface Props {
   onEditProforma?: (invoice: ProformaInvoice) => void;
   onPreviewProforma?: (invoice: ProformaInvoice) => void;
   onRecordPayment?: (invoiceId: string) => void;
+  onRecordPurchasePayment?: (invoiceId: string) => void;
   onPreviewCalc?: (invoice: InvoiceRecord) => void;
   onCreateNew?: (type: CustomInvoiceType) => void;
 }
@@ -67,21 +71,36 @@ export function BillingArchiveTable({
   onEditProforma,
   onPreviewProforma,
   onRecordPayment,
+  onRecordPurchasePayment,
   onPreviewCalc,
 }: Props) {
   const customers = useCustomers();
-  const customersById = useMemo(() => {
-    const map = new Map<string, CustomerRecord>();
-    for (const c of customers) map.set(c.id, c);
-    return map;
+  const { customersById, customersByNormName } = useMemo(() => {
+    const byId = new Map<string, CustomerRecord>();
+    const byName = new Map<string, CustomerRecord>();
+    for (const c of customers) {
+      byId.set(c.id, c);
+      if (!c.isArchived) {
+        const norm = normalizeCustomerName(c.name);
+        if (norm && !byName.has(norm)) {
+          byName.set(norm, c);
+        }
+      }
+    }
+    return { customersById: byId, customersByNormName: byName };
   }, [customers]);
 
   const [search, setSearch] = useState("");
   const [selectedType, setSelectedType] = useState<string>("all");
+  const [visibleCount, setVisibleCount] = useState<number>(ARCHIVE_PAGE_CHUNK);
   const [convertingId, setConvertingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [linkingInvoiceId, setLinkingInvoiceId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<UnifiedInvoiceRecord | null>(null);
+
+  useEffect(() => {
+    setVisibleCount(ARCHIVE_PAGE_CHUNK);
+  }, [search, selectedType]);
 
   const handleOpenCustomerProfile = (customerId: string) => {
     void router.navigate({ to: "/customers", search: { id: customerId } });
@@ -210,10 +229,15 @@ export function BillingArchiveTable({
     }
   };
 
+  const visibleRecords = useMemo(
+    () => filteredRecords.slice(0, visibleCount),
+    [filteredRecords, visibleCount]
+  );
+
   return (
-    <div className="rounded-2xl sm:rounded-3xl border border-border/60 bg-card/80 backdrop-blur-md shadow-md overflow-hidden w-full max-w-full" dir="rtl">
+    <div className="rounded-2xl sm:rounded-3xl border border-border/60 bg-card/95 shadow-md overflow-hidden w-full max-w-full" dir="rtl">
       <div className="p-3.5 sm:p-5 border-b border-border/50 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 md:gap-4">
-        <div className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-2xl bg-muted/60 w-full md:w-auto overflow-x-auto no-scrollbar scroll-smooth flex-nowrap shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-2xl bg-muted/60 w-full md:w-auto overflow-x-auto scrollbar-none overscroll-x-contain flex-nowrap shrink-0">
           {(
             [
               { id: "all", label: "كافة الفواتير" },
@@ -252,7 +276,10 @@ export function BillingArchiveTable({
         </div>
       </div>
 
-      <div className="overflow-x-auto w-full max-w-full touch-pan-x">
+      <div
+        className="overflow-x-auto overscroll-x-contain w-full max-w-full"
+        data-testid="billing-archive-scroll-box"
+      >
         <table className="w-full text-right text-xs min-w-[680px]">
           <thead>
             <tr className="bg-muted/40 text-muted-foreground font-black border-b border-border/50 h-11">
@@ -279,7 +306,7 @@ export function BillingArchiveTable({
                 </td>
               </tr>
             ) : (
-              filteredRecords.map((rec) => {
+              visibleRecords.map((rec) => {
                 const isCustom = rec.kind === "custom";
                 const isProforma = rec.kind === "proforma";
                 const isCalc = rec.kind === "calculator";
@@ -311,7 +338,7 @@ export function BillingArchiveTable({
                             ? customersById.get(rec.raw.customerId)
                             : undefined;
                           const matchedByName = !linkedCustomer
-                            ? findCustomerByNormalizedName(customers, rec.customerName)
+                            ? customersByNormName.get(normalizeCustomerName(rec.customerName))
                             : undefined;
 
                           if (linkedCustomer) {
@@ -355,7 +382,7 @@ export function BillingArchiveTable({
                         })()
                       ) : isProforma ? (
                         (() => {
-                          const matched = findCustomerByNormalizedName(customers, rec.customerName);
+                          const matched = customersByNormName.get(normalizeCustomerName(rec.customerName));
                           return matched ? (
                             <button
                               type="button"
@@ -388,10 +415,14 @@ export function BillingArchiveTable({
                         {formatAccountingNumber(rec.total)}{" "}
                         <span className="text-[10px] font-mono font-bold text-muted-foreground uppercase">{rec.currency || "SDG"}</span>
                       </span>
-                      {isCustom && rec.type === "sales" && (
+                      {isCustom && (rec.type === "sales" || rec.type === "purchase") && (
                         <span
                           className={`mt-0.5 block text-[10px] font-sans font-bold ${
-                            settlement.outstanding > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+                            settlement.outstanding > 0
+                              ? rec.type === "purchase"
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-amber-600 dark:text-amber-400"
+                              : "text-emerald-600 dark:text-emerald-400"
                           }`}
                         >
                           {settlement.outstanding > 0
@@ -408,6 +439,7 @@ export function BillingArchiveTable({
                         convertingId={convertingId}
                         sharingId={sharingId}
                         onRecordPayment={onRecordPayment}
+                        onRecordPurchasePayment={onRecordPurchasePayment}
                         onConvertProformaToSales={(r) => void handleConvertProformaToSales(r)}
                         onPreviewCustom={onPreviewCustom}
                         onPreviewProforma={onPreviewProforma}
@@ -427,6 +459,21 @@ export function BillingArchiveTable({
           </tbody>
         </table>
       </div>
+
+      {filteredRecords.length > visibleCount && (
+        <div className="flex items-center justify-center border-t border-border/40 p-3">
+          <button
+            type="button"
+            onClick={() => setVisibleCount((prev) => prev + ARCHIVE_PAGE_CHUNK)}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 transition-all cursor-pointer active:scale-95 touch-manipulation"
+          >
+            <ChevronDown className="h-4 w-4" />
+            <span>
+              عرض المزيد من الفواتير ({filteredRecords.length - visibleCount} فاتورة إضافية)
+            </span>
+          </button>
+        </div>
+      )}
 
       <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <AlertDialogContent dir="rtl" className="rounded-3xl">

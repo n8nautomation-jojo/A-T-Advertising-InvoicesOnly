@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { subscribeBackupRuns } from "./autoBackup";
 import { backupBridge, isBackupEngineAvailable } from "./bridge";
 import { loadBackupSettings, getBackupSettingsSnapshot, saveBackupSettings, subscribeBackupSettings } from "./settingsStore";
 import {
@@ -218,9 +219,15 @@ export function useBackupDashboard() {
         lastBackupAt: pickNewerIso(prev.lastBackupAt, nextSettings.lastBackupAt),
       }));
     });
+    const unsubRuns = subscribeBackupRuns((res) => {
+      if (mounted.current && res.ok) {
+        void refresh();
+      }
+    });
     return () => {
       mounted.current = false;
       unsub();
+      unsubRuns();
     };
   }, [refresh]);
 

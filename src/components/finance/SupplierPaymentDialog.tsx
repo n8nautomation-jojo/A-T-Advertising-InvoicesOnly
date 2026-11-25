@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,12 +17,32 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getAllAccounts, getDefaultAccountId } from "@/lib/repositories/FinancialAccountRepository";
-import { getAllSuppliers, getSupplierAccount, type SupplierAccount, type Supplier } from "@/lib/repositories/SupplierRepository";
+import { getCustomInvoiceById } from "@/lib/repositories/CustomInvoiceRepository";
+import {
+  ensureAccountForCurrency,
+  getAllAccounts,
+  getDefaultAccountId,
+} from "@/lib/repositories/FinancialAccountRepository";
+import { getInvoiceSettlement } from "@/lib/repositories/LedgerRepository";
+import {
+  createSupplier,
+  findOrCreateSupplierByName,
+  getAllSuppliers,
+  getSupplierAccount,
+  linkUnlinkedPurchaseInvoiceToSupplier,
+  normalizeSupplierName,
+  type SupplierAccount,
+  type Supplier,
+} from "@/lib/repositories/SupplierRepository";
 import { recordSupplierPayment } from "@/lib/repositories/PaymentRepository";
 import { notifyFinanceUpdated } from "@/lib/financeStore";
 import { getLocalIsoDate } from "@/lib/dateUtils";
-import { PAYMENT_METHOD_LABELS, type FinancialAccount, type PaymentMethod } from "@/lib/domain/finance";
+import {
+  getPreferredAccountForCurrency,
+  PAYMENT_METHOD_LABELS,
+  type FinancialAccount,
+  type PaymentMethod,
+} from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
 import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { DEFAULT_CURRENCY, sanitizeCurrency, type AppCurrency } from "@/lib/currency/types";
@@ -40,7 +60,7 @@ interface Props {
   onRecorded?: () => void;
 }
 
-/** تسجيل دفعة لمورد مقابل فواتير الشراء (§7.3) — تقلّل الالتزام والرصيد النقدي معاً. */
+/** تسجيل دفعة لمورد مقابل فواتير الشراء (§7.3) — تقلّل الالتزام وتخصم من الرصيد البنكي معاً. */
 export function SupplierPaymentDialog({
   open,
   onOpenChange,
@@ -59,12 +79,15 @@ export function SupplierPaymentDialog({
   const [supplierId, setSupplierId] = useState("");
   const [amount, setAmount] = useState("");
   const [paidAt, setPaidAt] = useState(() => getLocalIsoDate());
-  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [method, setMethod] = useState<PaymentMethod>("bank_transfer");
   const [accountId, setAccountId] = useState("");
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState<AllocationFormRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickSupplierName, setQuickSupplierName] = useState("");
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
   const appliedInitialInvoiceRef = useRef<string | null>(null);
 
   const isCurrencyLocked = Boolean(initialInvoiceId);
@@ -79,6 +102,7 @@ export function SupplierPaymentDialog({
   useEffect(() => {
     if (!open) {
       setDuplicateWarning(null);
+      setQuickAddOpen(false);
       appliedInitialInvoiceRef.current = null;
       return;
     }
@@ -86,22 +110,23 @@ export function SupplierPaymentDialog({
     setLoadingInit(true);
     setSupplierId(initialSupplierId ?? "");
     setNotes("");
-    setMethod("cash");
+    setMethod("bank_transfer");
     setPaidAt(getLocalIsoDate());
     setRows([]);
     setAmount("");
     setDuplicateWarning(null);
+    setQuickAddOpen(false);
+    setQuickSupplierName("");
     appliedInitialInvoiceRef.current = null;
 
     void (async () => {
       try {
         const fallbackCurrency = sanitizeCurrency(defaultCurrency, DEFAULT_CURRENCY);
-        let [supplierList, accountList, initialSupplierData] = await Promise.all([
+        let [supplierList, accountList, directInvoice, directSettlement] = await Promise.all([
           getAllSuppliers(),
           getAllAccounts(),
-          initialInvoiceId && initialSupplierId
-            ? getSupplierAccount(initialSupplierId).catch(() => null)
-            : Promise.resolve(null),
+          initialInvoiceId ? getCustomInvoiceById(initialInvoiceId).catch(() => undefined) : Promise.resolve(undefined),
+          initialInvoiceId ? getInvoiceSettlement(initialInvoiceId, "purchase").catch(() => null) : Promise.resolve(null),
         ]);
         if (accountList.length === 0) {
           await getDefaultAccountId();
@@ -109,21 +134,58 @@ export function SupplierPaymentDialog({
         }
         if (cancelled) return;
 
-        const matchedInitInvoice = initialInvoiceId
-          ? initialSupplierData?.invoices.find((inv) => inv.invoiceId === initialInvoiceId)
-          : undefined;
-        const resolvedCurrency = matchedInitInvoice
-          ? sanitizeCurrency(matchedInitInvoice.currency, fallbackCurrency)
-          : fallbackCurrency;
+        let resolvedCurrency = fallbackCurrency;
+        let resolvedSupplierId = initialSupplierId ?? "";
+
+        if (initialInvoiceId && directInvoice) {
+          resolvedCurrency = sanitizeCurrency(directInvoice.meta.currency, fallbackCurrency);
+          const invSupplierId = (directInvoice as unknown as { supplierId?: string }).supplierId;
+          if (invSupplierId && supplierList.some((s) => s.id === invSupplierId)) {
+            resolvedSupplierId = invSupplierId;
+          } else if (!resolvedSupplierId) {
+            const partyName = String(directInvoice.meta.partyName ?? "").trim();
+            const normParty = normalizeSupplierName(partyName);
+            const matchedSup = normParty
+              ? supplierList.find((s) => normalizeSupplierName(s.name) === normParty)
+              : undefined;
+            if (matchedSup) {
+              resolvedSupplierId = matchedSup.id;
+              await linkUnlinkedPurchaseInvoiceToSupplier(initialInvoiceId, matchedSup.id).catch(() => {});
+            } else if (partyName) {
+              const autoCreated = await findOrCreateSupplierByName(partyName, directInvoice.meta.phone);
+              await linkUnlinkedPurchaseInvoiceToSupplier(initialInvoiceId, autoCreated.id).catch(() => {});
+              supplierList = await getAllSuppliers();
+              resolvedSupplierId = autoCreated.id;
+            }
+          }
+
+          if (directSettlement && directSettlement.outstanding > 0) {
+            appliedInitialInvoiceRef.current = initialInvoiceId;
+            setRows([{ invoiceId: initialInvoiceId, amount: String(directSettlement.outstanding) }]);
+            setAmount(String(directSettlement.outstanding));
+          }
+        } else if (initialInvoiceId && initialSupplierId) {
+          const supData = await getSupplierAccount(initialSupplierId).catch(() => null);
+          const matchedInitInvoice = supData?.invoices.find((inv) => inv.invoiceId === initialInvoiceId);
+          if (matchedInitInvoice) {
+            resolvedCurrency = sanitizeCurrency(matchedInitInvoice.currency, fallbackCurrency);
+          }
+        }
+
+        if (cancelled) return;
 
         setSuppliers(supplierList);
         setAccounts(accountList);
+        setSupplierId(resolvedSupplierId);
         setCurrency(resolvedCurrency);
+        const preferred = getPreferredAccountForCurrency(accountList, resolvedCurrency);
         const matching = accountList.filter(
           (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === resolvedCurrency
         );
         setAccountId((current) =>
-          current && matching.some((a) => a.id === current) ? current : matching[0]?.id ?? ""
+          current && matching.some((a) => a.id === current)
+            ? current
+            : preferred?.id ?? matching[0]?.id ?? ""
         );
       } catch (err) {
         if (!cancelled) {
@@ -142,12 +204,13 @@ export function SupplierPaymentDialog({
 
   useEffect(() => {
     if (!open || loadingInit) return;
+    const preferred = getPreferredAccountForCurrency(accounts, currency);
     setAccountId((current) =>
       current && selectableAccounts.some((a) => a.id === current)
         ? current
-        : selectableAccounts[0]?.id ?? ""
+        : preferred?.id ?? selectableAccounts[0]?.id ?? ""
     );
-  }, [open, loadingInit, selectableAccounts]);
+  }, [open, loadingInit, selectableAccounts, accounts, currency]);
 
   const loadSupplier = useCallback(
     async (id: string, cur: AppCurrency) => {
@@ -192,11 +255,84 @@ export function SupplierPaymentDialog({
   const paymentAmount = Number(amount) || 0;
   const remaining = Math.max(0, paymentAmount - allocatedTotal);
 
+  const handleMainAmountChange = (rawVal: string) => {
+    const cleaned = sanitizePositiveDecimal(rawVal);
+    setAmount(cleaned);
+    setDuplicateWarning(null);
+
+    if (rows.length === 1) {
+      const targetRow = rows[0];
+      const inv = openInvoices.find((i) => i.invoiceId === targetRow.invoiceId);
+      const numeric = Number(cleaned) || 0;
+      const capped =
+        inv && inv.settlement.outstanding > 0
+          ? Math.min(numeric, inv.settlement.outstanding)
+          : numeric;
+      setRows([
+        {
+          invoiceId: targetRow.invoiceId,
+          amount: cleaned === "" ? "" : capped > 0 ? String(capped) : "",
+        },
+      ]);
+    }
+  };
+
+  const handleRowAmountChange = (index: number, cleanedRowVal: string) => {
+    setDuplicateWarning(null);
+    const prevRowVal = rows[index]?.amount ?? "";
+    const nextRows = rows.map((r, i) => (i === index ? { ...r, amount: cleanedRowVal } : r));
+    setRows(nextRows);
+
+    const nextAllocated = nextRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    if (nextRows.length === 1 && (amount === prevRowVal || amount === "")) {
+      setAmount(cleanedRowVal);
+    } else if (nextAllocated > (Number(amount) || 0)) {
+      setAmount(String(Math.round(nextAllocated * 100) / 100));
+    }
+  };
+
   const handleCurrencyChange = (next: AppCurrency) => {
     if (isCurrencyLocked) return;
     setCurrency(sanitizeCurrency(next, DEFAULT_CURRENCY));
     setRows([]);
     setDuplicateWarning(null);
+  };
+
+  const handleQuickAddSupplier = async () => {
+    const trimmed = quickSupplierName.trim();
+    if (!trimmed) {
+      toast.error("أدخل اسم المورد أولاً");
+      return;
+    }
+    setCreatingSupplier(true);
+    try {
+      const created = await createSupplier({ name: trimmed });
+      if (initialInvoiceId) {
+        await linkUnlinkedPurchaseInvoiceToSupplier(initialInvoiceId, created.id).catch(() => {});
+      }
+      const list = await getAllSuppliers();
+      setSuppliers(list);
+      setSupplierId(created.id);
+      setQuickSupplierName("");
+      setQuickAddOpen(false);
+      toast.success(`تمت إضافة المورد «${created.name}» واختياره`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "تعذّر إضافة المورد.");
+    } finally {
+      setCreatingSupplier(false);
+    }
+  };
+
+  const handleProvisionAccount = async () => {
+    try {
+      const acc = await ensureAccountForCurrency(currency);
+      const updated = await getAllAccounts();
+      setAccounts(updated);
+      setAccountId(acc.id);
+      toast.success(`تم تفعيل الحساب «${acc.name}» بعملة ${currencyLabel}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "تعذّر تفعيل الحساب.");
+    }
   };
 
   const addRow = () => {
@@ -286,7 +422,7 @@ export function SupplierPaymentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-sm font-black">دفعة لمورد</DialogTitle>
+          <DialogTitle className="text-sm font-black">سداد فاتورة مشتريات / دفعة لمورد</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -307,9 +443,19 @@ export function SupplierPaymentDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-foreground">
-              المورد <span className="text-rose-500">*</span>
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[11px] font-black text-foreground">
+                المورد <span className="text-rose-500">*</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setQuickAddOpen((v) => !v)}
+                className="inline-flex items-center gap-1 text-[10.5px] font-black text-primary hover:underline"
+              >
+                <UserPlus className="h-3 w-3" />
+                <span>{quickAddOpen ? "إغلاق الإضافة" : "مورد جديد"}</span>
+              </button>
+            </div>
             <Select
               value={supplierId || "__none__"}
               onValueChange={(v) => {
@@ -331,6 +477,27 @@ export function SupplierPaymentDialog({
                 ))}
               </SelectContent>
             </Select>
+
+            {quickAddOpen && (
+              <div className="rounded-xl border border-primary/25 bg-primary/[0.04] p-2.5 flex items-center gap-2">
+                <Input
+                  value={quickSupplierName}
+                  onChange={(e) => setQuickSupplierName(e.target.value)}
+                  placeholder="اسم المورد *"
+                  className="h-9 rounded-lg text-xs font-bold bg-background text-right flex-1"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={creatingSupplier || !quickSupplierName.trim()}
+                  onClick={() => void handleQuickAddSupplier()}
+                  className="h-9 rounded-lg text-[11px] font-black shrink-0"
+                >
+                  حفظ واختيار
+                </Button>
+              </div>
+            )}
+
             {account && (
               <p className="text-[10px] font-bold text-muted-foreground">
                 إجمالي الالتزام {formatNumber(account.totalObligations)} {currencyLabel} · المدفوع{" "}
@@ -348,10 +515,7 @@ export function SupplierPaymentDialog({
               <Input
                 inputMode="decimal"
                 value={amount}
-                onChange={(e) => {
-                  setAmount(sanitizePositiveDecimal(e.target.value));
-                  setDuplicateWarning(null);
-                }}
+                onChange={(e) => handleMainAmountChange(e.target.value)}
                 className="h-10 rounded-xl text-xs font-bold bg-background text-center tabular-nums"
                 placeholder="0"
               />
@@ -394,7 +558,7 @@ export function SupplierPaymentDialog({
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-black text-foreground">
-                الحساب المالي <span className="text-rose-500">*</span>
+                الحساب المخصوم منه <span className="text-rose-500">*</span>
               </label>
               <Select
                 value={accountId || "__none__"}
@@ -417,11 +581,22 @@ export function SupplierPaymentDialog({
           </div>
 
           {noMatchingAccount && (
-            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>
-                لا يوجد حساب مالي بعملة {currency} ({currencyLabel}). يرجى إضافة حساب مالي بهذه العملة من صفحة المالية أولاً.
-              </span>
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 space-y-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  لا يوجد حساب مالي بعملة {currency} ({currencyLabel}). يرجى إضافة حساب مالي بهذه العملة من صفحة المالية أولاً.
+                </span>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void handleProvisionAccount()}
+                className="h-7 rounded-lg text-[10.5px] font-black border-amber-500/40"
+              >
+                تفعيل حساب {currencyLabel} تلقائياً
+              </Button>
             </div>
           )}
 
@@ -429,6 +604,7 @@ export function SupplierPaymentDialog({
             openInvoices={openInvoices}
             rows={rows}
             setRows={setRows}
+            onRowAmountChange={handleRowAmountChange}
             paymentAmount={paymentAmount}
             allocatedTotal={allocatedTotal}
             currencyLabel={currencyLabel}

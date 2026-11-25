@@ -35,7 +35,7 @@ beforeEach(async () => {
   const outcome = await runPendingMigrations(db, { nowIso: NOW });
   expect(outcome.warnings).toEqual([]);
   expect(outcome.to).toBe(SCHEMA_VERSION);
-  expect(outcome.to).toBe(7);
+  expect(outcome.to).toBe(8);
 });
 
 function insertInvoice(id: string, type: string, date: string, reference: string | null, createdAt: string) {

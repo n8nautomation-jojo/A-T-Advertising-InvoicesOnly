@@ -60,7 +60,7 @@ export function ReportsSalesCollectionsView({
           {!sales?.byCustomer?.length ? (
             <p className="py-3 text-center text-xs text-muted-foreground">لا توجد بيانات عملاء في هذه الفترة.</p>
           ) : (
-            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-56 overflow-y-auto overscroll-y-auto pr-1">
               {sales.byCustomer.map((row) => (
                 <div
                   key={row.name}
@@ -92,7 +92,7 @@ export function ReportsSalesCollectionsView({
           {!sales?.invoices?.length ? (
             <p className="py-3 text-center text-xs text-muted-foreground">لا توجد فواتير مصدرة في هذه الفترة.</p>
           ) : (
-            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-64 overflow-y-auto overscroll-y-auto pr-1">
               {sales.invoices.slice(0, 40).map((inv) => (
                 <div
                   key={inv.id}
@@ -158,7 +158,7 @@ export function ReportsSalesCollectionsView({
         {!collections?.payments?.length ? (
           <p className="py-3 text-center text-xs text-muted-foreground">لا توجد دفعات محصلة في هذه الفترة.</p>
         ) : (
-          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+          <div className="space-y-1.5 max-h-60 overflow-y-auto overscroll-y-auto pr-1">
             {collections.payments.map((p) => (
               <div
                 key={p.id}
@@ -194,7 +194,7 @@ export function ReportsSalesCollectionsView({
         {!collections?.openInvoices?.length ? (
           <p className="py-3 text-center text-xs text-muted-foreground">لا توجد فواتير ذات أرصدة معلقة. جميع الحسابات مسواة.</p>
         ) : (
-          <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+          <div className="space-y-1.5 max-h-64 overflow-y-auto overscroll-y-auto pr-1">
             {collections.openInvoices.map((inv) => (
               <div
                 key={inv.id}

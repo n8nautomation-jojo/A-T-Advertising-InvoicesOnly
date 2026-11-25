@@ -338,8 +338,11 @@ describe("ReceiptDialog & FinancePage integration", () => {
     });
   });
 
-  it("isolates USD invoices/accounts in ReceiptDialog, warns when no USD account exists, and never renders SDG labels", async () => {
+  it("supports immediate USD partial & full collection out of the box and warns if USD accounts are deactivated", async () => {
     seedSalesInvoice("inv-usd-1", "261112S099", "cust-1", "شركة النور", 250, "USD");
+
+    // 1) If all USD accounts are manually deactivated, cross-currency guard blocks & offers 1-click activation
+    state.db.db.prepare("UPDATE financial_accounts SET is_active = 0 WHERE currency = 'USD'").run();
 
     const { unmount } = render(
       <ReceiptDialog
@@ -360,12 +363,16 @@ describe("ReceiptDialog & FinancePage integration", () => {
     expect(screen.queryByText(/ج\.س/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "تسجيل التحصيل" })).toBeDisabled();
 
+    // 1-click inline reactivation restores the seeded USD bank account immediately
+    fireEvent.click(screen.getByRole("button", { name: /تفعيل حساب \$ تلقائياً/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "تسجيل التحصيل" })).not.toBeDisabled();
+    });
+
     unmount();
 
-    // Now create a USD account and verify submission works cleanly in USD
-    await createAccount({ name: "خزينة الدولار", kind: "cash", currency: "USD" });
+    // 2) Verify partial payment (100 out of 250 USD) syncs allocation row automatically and succeeds
     const onRecorded = vi.fn();
-
     render(
       <ReceiptDialog
         open={true}
@@ -380,6 +387,9 @@ describe("ReceiptDialog & FinancePage integration", () => {
       expect(btn).not.toBeDisabled();
     });
 
+    const numericInputs = screen.getAllByPlaceholderText("0") as HTMLInputElement[];
+    fireEvent.change(numericInputs[0], { target: { value: "100" } });
+
     fireEvent.click(screen.getByRole("button", { name: "تسجيل التحصيل" }));
     await waitFor(() => {
       expect(onRecorded).toHaveBeenCalledTimes(1);
@@ -387,11 +397,12 @@ describe("ReceiptDialog & FinancePage integration", () => {
 
     const usdReceipts = await getCustomerReceipts(20, "USD");
     expect(usdReceipts).toHaveLength(1);
-    expect(usdReceipts[0].amount).toBe(250);
+    expect(usdReceipts[0].amount).toBe(100);
     expect(usdReceipts[0].currency).toBe("USD");
   });
 
-  it("isolates currency in SupplierPaymentDialog and blocks submit when no matching currency account exists", async () => {
+  it("isolates currency in SupplierPaymentDialog and blocks submit when matching currency account is deactivated", async () => {
+    state.db.db.prepare("UPDATE financial_accounts SET is_active = 0 WHERE currency = 'USD'").run();
     const sup = await createSupplier({ name: "مطبعة الشرق" });
     seedPurchaseInvoice("pur-sdg-1", "261112P001", sup.id, sup.name, 5000, "SDG");
     seedPurchaseInvoice("pur-usd-1", "261112P002", sup.id, sup.name, 300, "USD");
@@ -413,7 +424,8 @@ describe("ReceiptDialog & FinancePage integration", () => {
     expect(screen.getByRole("button", { name: "تسجيل الدفعة" })).toBeDisabled();
   });
 
-  it("blocks cross-currency settlement in ExpenseDialog when no matching currency account exists", async () => {
+  it("blocks cross-currency settlement in ExpenseDialog when matching currency account is deactivated", async () => {
+    state.db.db.prepare("UPDATE financial_accounts SET is_active = 0 WHERE currency = 'USD'").run();
     const usdExpense = await createExpense({
       kind: "operating",
       beneficiary: "خدمة استضافة",
@@ -437,9 +449,7 @@ describe("ReceiptDialog & FinancePage integration", () => {
     expect(screen.getByRole("button", { name: "تسجيل السداد" })).toBeDisabled();
   });
 
-  it("blocks cross-currency transfers in TransferDialog when accounts do not share the same currency", async () => {
-    await createAccount({ name: "خزينة الدولار", kind: "cash", currency: "USD" });
-
+  it("blocks cross-currency transfers in TransferDialog when each currency has only one active account", async () => {
     render(<TransferDialog open={true} onOpenChange={() => {}} />);
 
     await waitFor(() => {

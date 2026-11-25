@@ -70,7 +70,7 @@ export function ReportsStatementsView({
         {customers.length === 0 ? (
           <p className="text-xs text-muted-foreground py-2 text-center">لا يوجد عملاء مسجلون حالياً.</p>
         ) : (
-          <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
+          <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto overscroll-y-auto pr-1">
             {customers.map((c) => (
               <Button
                 key={c.id}
@@ -102,7 +102,7 @@ export function ReportsStatementsView({
         {suppliers.length === 0 ? (
           <p className="text-xs text-muted-foreground py-2 text-center">لا يوجد موردون مسجلون حالياً.</p>
         ) : (
-          <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
+          <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto overscroll-y-auto pr-1">
             {suppliers.map((s) => (
               <Button
                 key={s.id}
@@ -291,7 +291,7 @@ function StatementModal({
         {lines.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">لا توجد حركات مسجلة لهذا الحساب.</p>
         ) : (
-          <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+          <div className="space-y-1.5 max-h-80 overflow-y-auto overscroll-y-auto pr-1">
             {lines.map((line) => (
               <div
                 key={`${line.kind}-${line.id}`}

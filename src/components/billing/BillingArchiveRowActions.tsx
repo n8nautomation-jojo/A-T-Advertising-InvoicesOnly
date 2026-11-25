@@ -6,6 +6,7 @@ import {
   Copy,
   Eye,
   Receipt,
+  Wallet,
   ArrowLeftRight,
   Share2,
   Loader2,
@@ -21,6 +22,7 @@ interface BillingArchiveRowActionsProps {
   convertingId: string | null;
   sharingId: string | null;
   onRecordPayment?: (invoiceId: string) => void;
+  onRecordPurchasePayment?: (invoiceId: string) => void;
   onConvertProformaToSales: (rec: UnifiedInvoiceRecord) => void;
   onPreviewCustom: (invoice: CustomInvoice) => void;
   onPreviewProforma?: (invoice: ProformaInvoice) => void;
@@ -39,6 +41,7 @@ export function BillingArchiveRowActions({
   convertingId,
   sharingId,
   onRecordPayment,
+  onRecordPurchasePayment,
   onConvertProformaToSales,
   onPreviewCustom,
   onPreviewProforma,
@@ -60,10 +63,21 @@ export function BillingArchiveRowActions({
         <button
           type="button"
           onClick={() => onRecordPayment(rec.id)}
-          title="تسجيل دفعة"
+          title="تسجيل دفعة تحصيل"
           className="h-8 w-8 rounded-lg flex items-center justify-center text-emerald-600 hover:bg-emerald-500/10 transition-colors active:scale-90"
         >
           <Receipt className="h-4 w-4" />
+        </button>
+      )}
+
+      {isCustom && rec.type === "purchase" && outstanding > 0 && onRecordPurchasePayment && (
+        <button
+          type="button"
+          onClick={() => onRecordPurchasePayment(rec.id)}
+          title="سداد فاتورة المشتريات"
+          className="h-8 w-8 rounded-lg flex items-center justify-center text-rose-600 hover:bg-rose-500/10 transition-colors active:scale-90"
+        >
+          <Wallet className="h-4 w-4" />
         </button>
       )}
 

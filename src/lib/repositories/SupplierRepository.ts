@@ -161,17 +161,55 @@ export interface SupplierAccount {
   invoices: SupplierObligationRow[];
 }
 
-/** Purchase invoices of one supplier with payments applied (single grouped query, includes unallocated advances). */
+/** Normalizes a supplier/party name for case- and whitespace-insensitive matching. */
+export function normalizeSupplierName(name: string): string {
+  return String(name ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+export async function linkUnlinkedPurchaseInvoiceToSupplier(
+  invoiceId: string,
+  supplierId: string
+): Promise<void> {
+  if (!invoiceId || !supplierId) return;
+  const db = await getDb();
+  await db.run(
+    "UPDATE custom_invoices SET supplier_id = ? WHERE id = ? AND type = 'purchase' AND (supplier_id IS NULL OR supplier_id = '')",
+    [supplierId, invoiceId]
+  );
+  notifyDataChanged();
+}
+
+/** Finds an active supplier matching `name` (normalized) or creates one if absent. */
+export async function findOrCreateSupplierByName(
+  name: string,
+  phone?: string,
+  nowIso = new Date().toISOString()
+): Promise<Supplier> {
+  const cleanName = String(name ?? "").trim() || "مورد عام";
+  const targetNorm = normalizeSupplierName(cleanName);
+  const all = await getAllSuppliers();
+  const existing = all.find((s) => normalizeSupplierName(s.name) === targetNorm);
+  if (existing) return existing;
+  return createSupplier({ name: cleanName, phone, nowIso });
+}
+
+/** Purchase invoices of one supplier with payments applied (includes unlinked purchase invoices matching supplier name). */
 export async function getSupplierAccount(
   supplierId: string,
   currency?: AppCurrency
 ): Promise<SupplierAccount> {
   const db = await getDb();
   const cur = currency ? sanitizeCurrency(currency) : undefined;
-  const [supplier, invoicesRes, totalPaymentsRes] = await Promise.all([
-    getSupplierById(supplierId),
+  const supplier = await getSupplierById(supplierId);
+  const normSupplierName = supplier ? normalizeSupplierName(supplier.name) : "";
+
+  const [invoicesRes, totalPaymentsRes] = await Promise.all([
     db.query(
-      `SELECT i.id, i.reference, i.supplier_invoice_number, i.date, i.total_amount,
+      `SELECT i.id, i.reference, i.serial, i.supplier_invoice_number, i.date, i.total_amount,
+              i.supplier_id, i.party_name,
               COALESCE(i.currency, 'SDG') AS currency,
               COALESCE(a.paid, 0) AS allocated_paid
          FROM custom_invoices i
@@ -182,10 +220,16 @@ export async function getSupplierAccount(
             WHERE p.cancelled_at IS NULL ${cur ? "AND COALESCE(p.currency, 'SDG') = ?" : ""}
             GROUP BY al.invoice_id
          ) a ON a.invoice_id = i.id
-        WHERE i.supplier_id = ? AND i.type = 'purchase' AND i.cancelled_at IS NULL
+        WHERE i.type = 'purchase' AND i.cancelled_at IS NULL
+          AND (
+            i.supplier_id = ?
+            OR ((i.supplier_id IS NULL OR i.supplier_id = '') AND ? != '' AND LOWER(TRIM(i.party_name)) = ?)
+          )
           ${cur ? "AND COALESCE(i.currency, 'SDG') = ?" : ""}
         ORDER BY i.date DESC, i.created_at DESC`,
-      cur ? [cur, supplierId, cur] : [supplierId]
+      cur
+        ? [cur, supplierId, normSupplierName, normSupplierName, cur]
+        : [supplierId, normSupplierName, normSupplierName]
     ),
     db.query(
       `SELECT COALESCE(SUM(amount), 0) AS paid
@@ -206,7 +250,7 @@ export async function getSupplierAccount(
     allocatedTotal += settlement.paid;
     invoices.push({
       invoiceId: String(row.id),
-      reference: String(row.reference ?? ""),
+      reference: String(row.reference ?? row.serial ?? ""),
       supplierInvoiceNumber: row.supplier_invoice_number ?? undefined,
       date: String(row.date ?? ""),
       currency: String(row.currency ?? "SDG"),
@@ -234,14 +278,22 @@ export async function getSupplierAccount(
 export async function getSupplierOutstandingMap(currency?: AppCurrency): Promise<Record<string, number>> {
   const db = await getDb();
   const cur = currency ? sanitizeCurrency(currency) : undefined;
-  const [supRes, invRes, payRes] = await Promise.all([
-    db.query("SELECT id FROM suppliers WHERE cancelled_at IS NULL"),
+  const [supRes, invRes, unlinkedInvRes, payRes] = await Promise.all([
+    db.query("SELECT id, name FROM suppliers WHERE cancelled_at IS NULL"),
     db.query(
       `SELECT supplier_id, COALESCE(SUM(total_amount), 0) AS total
          FROM custom_invoices
-        WHERE type = 'purchase' AND cancelled_at IS NULL AND supplier_id IS NOT NULL
+        WHERE type = 'purchase' AND cancelled_at IS NULL AND supplier_id IS NOT NULL AND supplier_id != ''
           ${cur ? "AND COALESCE(currency, 'SDG') = ?" : ""}
         GROUP BY supplier_id`,
+      cur ? [cur] : []
+    ),
+    db.query(
+      `SELECT LOWER(TRIM(party_name)) AS norm_name, COALESCE(SUM(total_amount), 0) AS total
+         FROM custom_invoices
+        WHERE type = 'purchase' AND cancelled_at IS NULL AND (supplier_id IS NULL OR supplier_id = '') AND party_name IS NOT NULL
+          ${cur ? "AND COALESCE(currency, 'SDG') = ?" : ""}
+        GROUP BY LOWER(TRIM(party_name))`,
       cur ? [cur] : []
     ),
     db.query(
@@ -256,13 +308,18 @@ export async function getSupplierOutstandingMap(currency?: AppCurrency): Promise
 
   const invMap = new Map<string, number>();
   for (const r of invRes.values ?? []) invMap.set(String(r.supplier_id), Number(r.total) || 0);
+  const unlinkedByNorm = new Map<string, number>();
+  for (const r of unlinkedInvRes.values ?? []) {
+    if (r.norm_name) unlinkedByNorm.set(String(r.norm_name), Number(r.total) || 0);
+  }
   const payMap = new Map<string, number>();
   for (const r of payRes.values ?? []) payMap.set(String(r.supplier_id), Number(r.paid) || 0);
 
   const result: Record<string, number> = {};
   for (const s of supRes.values ?? []) {
     const sid = String(s.id);
-    const total = invMap.get(sid) ?? 0;
+    const norm = String(s.name ?? "").trim().toLowerCase();
+    const total = (invMap.get(sid) ?? 0) + (unlinkedByNorm.get(norm) ?? 0);
     const paid = payMap.get(sid) ?? 0;
     result[sid] = Math.round(Math.max(0, total - paid) * 100) / 100;
   }

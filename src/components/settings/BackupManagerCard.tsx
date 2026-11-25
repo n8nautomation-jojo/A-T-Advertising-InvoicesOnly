@@ -13,6 +13,7 @@ import { BackupActionsCard } from "./backup/BackupActionsCard";
 import { RestoreHubDialog } from "./backup/RestoreHubDialog";
 import { BackupSettingsDialog } from "./backup/BackupSettingsDialog";
 import { BackupHistoryDialog } from "./backup/BackupHistoryDialog";
+import { RecoveryKeyDialog } from "./backup/RecoveryKeyDialog";
 import { useBackupManagerActions } from "./backup/useBackupManagerActions";
 
 export {
@@ -30,6 +31,7 @@ export function BackupManagerCard() {
   const [isRestoreHubOpen, setIsRestoreHubOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRecoveryKeyOpen, setIsRecoveryKeyOpen] = useState(false);
   const [restoreSuccessResult, setRestoreSuccessResult] =
     useState<RestoreResult | null>(null);
   const [preSelectedBackup, setPreSelectedBackup] =
@@ -96,9 +98,14 @@ export function BackupManagerCard() {
         }}
         onOpenHistory={() => setIsHistoryOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenRecoveryKey={() => setIsRecoveryKeyOpen(true)}
         onImportClick={() => fileInputRef.current?.click()}
         onVerifyLatest={() => newest && handleVerify(newest.fileName)}
         hasLatestBackup={Boolean(newest)}
+        encryptionEnabled={settings.encryptionEnabled}
+        needsKeyBackupBadge={
+          settings.encryptionEnabled && !settings.recoveryKeyExportedAt
+        }
       />
 
       <input
@@ -162,6 +169,18 @@ export function BackupManagerCard() {
           setIsRestoreHubOpen(true);
         }}
         onExport={handleExport}
+      />
+
+      <RecoveryKeyDialog
+        open={isRecoveryKeyOpen}
+        onOpenChange={setIsRecoveryKeyOpen}
+        encryptionEnabled={settings.encryptionEnabled}
+        encryptionAvailable={dashboard.encryptionAvailable}
+        hasEncryptionKey={dashboard.hasEncryptionKey}
+        encryptionKeyId={dashboard.encryptionKeyId}
+        recoveryKeyExportedAt={settings.recoveryKeyExportedAt}
+        onExportRecoveryKey={handleExportRecoveryKey}
+        onImportRecoveryKey={handleImportRecoveryKey}
       />
     </section>
   );

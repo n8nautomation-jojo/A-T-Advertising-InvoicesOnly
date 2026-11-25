@@ -158,6 +158,7 @@ interface ReceiptInvoiceAllocationsProps {
   unallocatedCustomerInvoices: OpenSalesInvoiceRow[];
   rows: AllocationFormRow[];
   setRows: React.Dispatch<React.SetStateAction<AllocationFormRow[]>>;
+  onRowAmountChange?: (index: number, nextAmount: string) => void;
   paymentAmount: number;
   allocatedTotal: number;
   remaining: number;
@@ -174,6 +175,7 @@ export function ReceiptInvoiceAllocationsSection({
   unallocatedCustomerInvoices,
   rows,
   setRows,
+  onRowAmountChange,
   paymentAmount,
   allocatedTotal,
   remaining,
@@ -371,15 +373,18 @@ export function ReceiptInvoiceAllocationsSection({
                           <Input
                             inputMode="decimal"
                             value={row.amount}
-                            onChange={(e) =>
-                              setRows((current) =>
-                                current.map((r, i) =>
-                                  i === index
-                                    ? { ...r, amount: sanitizePositiveDecimal(e.target.value) }
-                                    : r
-                                )
-                              )
-                            }
+                            onChange={(e) => {
+                              const cleaned = sanitizePositiveDecimal(e.target.value);
+                              if (onRowAmountChange) {
+                                onRowAmountChange(index, cleaned);
+                              } else {
+                                setRows((current) =>
+                                  current.map((r, i) =>
+                                    i === index ? { ...r, amount: cleaned } : r
+                                  )
+                                );
+                              }
+                            }}
                             placeholder="0"
                             className="h-8 w-24 rounded-lg text-xs font-bold text-center tabular-nums bg-background"
                           />

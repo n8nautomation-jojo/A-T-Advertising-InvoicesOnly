@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Storage Access Framework access to the user-chosen backup folder.
@@ -85,17 +86,65 @@ final class BackupStorage {
     }
 
     void persistFolder(Uri treeUri) throws FolderUnavailableException {
+        persistFolder(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+    }
+
+    void persistFolder(Uri treeUri, int intentFlags) throws FolderUnavailableException {
         if (treeUri == null) throw new FolderUnavailableException("NO_FOLDER", "لم يتم اختيار مجلد النسخ الاحتياطي.");
         ContentResolver resolver = context.getContentResolver();
+        int rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+        int takeFlags = intentFlags & rwFlags;
+        if (takeFlags == 0) takeFlags = rwFlags;
         try {
-            resolver.takePersistableUriPermission(
-                treeUri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            );
+            resolver.takePersistableUriPermission(treeUri, takeFlags);
         } catch (SecurityException e) {
-            throw new FolderUnavailableException("PERMISSION_LOST", "لم يمنح مدير الملفات صلاحية دائمة للوصول إلى المجلد.");
+            try {
+                resolver.takePersistableUriPermission(treeUri, rwFlags);
+            } catch (SecurityException e2) {
+                throw new FolderUnavailableException(
+                    "PERMISSION_LOST",
+                    "تعذّر الحصول على صلاحية دائمة لهذا المجلد. يُفضّل إنشاء أو اختيار مجلد فرعي مثل Documents/InvoiceBackups."
+                );
+            }
         }
-        prefs().edit().putString(KEY_TREE, treeUri.toString()).putString(KEY_LABEL, describe(treeUri)).commit();
+        SharedPreferences sp = prefs();
+        String prevTree = sp.getString(KEY_TREE, null);
+        String prevLabel = sp.getString(KEY_LABEL, null);
+        sp.edit().putString(KEY_TREE, treeUri.toString()).putString(KEY_LABEL, describe(treeUri)).commit();
+        try (
+            Cursor probe = resolver.query(
+                DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri)),
+                new String[] { Document.COLUMN_DOCUMENT_ID },
+                null,
+                null,
+                null
+            )
+        ) {
+            if (probe == null) {
+                rollbackFolderPrefs(sp, prevTree, prevLabel);
+                throw new FolderUnavailableException(
+                    "PERMISSION_LOST",
+                    "تعذّرت قراءة محتويات المجلد المختار. يُفضّل إنشاء أو اختيار مجلد فرعي مثل Documents/InvoiceBackups."
+                );
+            }
+        } catch (FolderUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            rollbackFolderPrefs(sp, prevTree, prevLabel);
+            throw new FolderUnavailableException(
+                "PERMISSION_LOST",
+                "تعذّر الوصول إلى المجلد المختار. يُفضّل إنشاء أو اختيار مجلد فرعي مثل Documents/InvoiceBackups."
+            );
+        }
+    }
+
+    private static void rollbackFolderPrefs(SharedPreferences sp, String prevTree, String prevLabel) {
+        SharedPreferences.Editor ed = sp.edit();
+        if (prevTree == null) ed.remove(KEY_TREE);
+        else ed.putString(KEY_TREE, prevTree);
+        if (prevLabel == null) ed.remove(KEY_LABEL);
+        else ed.putString(KEY_LABEL, prevLabel);
+        ed.commit();
     }
 
     /** Remembers the folder URI only when its grant is still valid. */
@@ -219,21 +268,28 @@ final class BackupStorage {
             cursor = context.getContentResolver().query(children, projection, null, null, null);
             if (cursor == null) return out;
             while (cursor.moveToNext()) {
-                String name = cursor.getString(1);
-                String mime = cursor.getString(4);
-                if (Document.MIME_TYPE_DIR.equals(mime)) continue;
-                if (name == null) continue;
-                String lower = name.toLowerCase();
-                boolean isTabk = lower.endsWith(BackupArchiveConstants.FILE_SUFFIX);
-                boolean isStaging = lower.endsWith(BackupArchiveConstants.STAGING_SUFFIX);
-                if (!isTabk && !isStaging) continue;
-                // Rename-during-commit leftovers ("prev-…") are never valid backups.
-                Entry e = new Entry();
-                e.fileName = name;
-                e.uri = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0)).toString();
-                e.size = cursor.isNull(2) ? -1 : cursor.getLong(2);
-                e.modifiedAt = cursor.isNull(3) ? 0 : cursor.getLong(3);
-                out.add(e);
+                try {
+                    String docId = cursor.getString(0);
+                    String name = cursor.getString(1);
+                    String mime = cursor.getString(4);
+                    if (Document.MIME_TYPE_DIR.equals(mime)) continue;
+                    if (docId == null || docId.isEmpty() || name == null || name.isEmpty()) continue;
+                    String lower = name.toLowerCase(Locale.ROOT);
+                    boolean isTabk = lower.endsWith(BackupArchiveConstants.FILE_SUFFIX);
+                    boolean isStaging =
+                        lower.endsWith(BackupArchiveConstants.STAGING_SUFFIX) ||
+                        lower.endsWith(BackupArchiveConstants.STAGING_SUFFIX + ".bin");
+                    if (!isTabk && !isStaging) continue;
+                    // Rename-during-commit leftovers ("prev-…") are never valid backups.
+                    Entry e = new Entry();
+                    e.fileName = name;
+                    e.uri = DocumentsContract.buildDocumentUriUsingTree(tree, docId).toString();
+                    e.size = cursor.isNull(2) ? -1 : cursor.getLong(2);
+                    e.modifiedAt = cursor.isNull(3) ? 0 : cursor.getLong(3);
+                    out.add(e);
+                } catch (Exception rowErr) {
+                    Log.w(TAG, "Skipping malformed SAF cursor row: " + rowErr.getMessage());
+                }
             }
         } catch (Exception e) {
             throw new FolderUnavailableException("PERMISSION_LOST", "تعذّر عرض محتويات مجلد النسخ: " + e.getMessage());
@@ -269,7 +325,11 @@ final class BackupStorage {
                 buffer.write(chunk, 0, read);
             }
             return buffer.toByteArray();
+        } catch (FolderUnavailableException e) {
+            throw e;
         } catch (IOException e) {
+            throw new FolderUnavailableException("IO_FAILED", "read failed: " + e.getMessage());
+        } catch (Exception e) {
             throw new FolderUnavailableException("IO_FAILED", "read failed: " + e.getMessage());
         }
     }
@@ -278,6 +338,21 @@ final class BackupStorage {
         assertSafeFileName(fileName);
         Uri tree = requireFolder();
         Uri doc = findDocument(tree, fileName);
+        if (doc == null) throw new FolderUnavailableException("IO_FAILED", "backup file not found: " + fileName);
+        return read(doc, 512L * 1024 * 1024);
+    }
+
+    byte[] readFileByUriOrName(Uri uri, Uri tree, String fileName) throws FolderUnavailableException {
+        if (uri != null) {
+            try {
+                return read(uri, 512L * 1024 * 1024);
+            } catch (FolderUnavailableException ignored) {
+                // fall back to display-name lookup
+            }
+        }
+        assertSafeFileName(fileName);
+        Uri resolvedTree = tree != null ? tree : requireFolder();
+        Uri doc = findDocument(resolvedTree, fileName);
         if (doc == null) throw new FolderUnavailableException("IO_FAILED", "backup file not found: " + fileName);
         return read(doc, 512L * 1024 * 1024);
     }
@@ -293,8 +368,14 @@ final class BackupStorage {
         )) {
             if (cursor == null) return null;
             while (cursor.moveToNext()) {
-                if (fileName.equals(cursor.getString(1))) {
-                    return DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+                try {
+                    String docId = cursor.getString(0);
+                    String displayName = cursor.getString(1);
+                    if (docId != null && !docId.isEmpty() && fileName.equals(displayName)) {
+                        return DocumentsContract.buildDocumentUriUsingTree(tree, docId);
+                    }
+                } catch (Exception ignored) {
+                    // skip malformed row
                 }
             }
         } catch (Exception e) {
@@ -303,8 +384,8 @@ final class BackupStorage {
         return null;
     }
 
-    /** Creates (or truncates) a document and streams the bytes into it. */
-    void writeDocument(Uri tree, String fileName, byte[] data) throws FolderUnavailableException {
+    /** Creates (or truncates) a document and streams the bytes into it, returning the created document Uri. */
+    Uri writeDocument(Uri tree, String fileName, byte[] data) throws FolderUnavailableException {
         assertSafeFileName(fileName);
         ContentResolver resolver = context.getContentResolver();
         Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
@@ -324,43 +405,53 @@ final class BackupStorage {
         }
         if (target == null) throw new FolderUnavailableException("IO_FAILED", "تعذّر إنشاء " + fileName);
         try (OutputStream out = resolver.openOutputStream(target, "wt")) {
-            if (out == null) throw new FolderUnavailableException("IO_FAILED", "تعذّر فتح الملف للكتابة: " + fileName);
+            if (out == null) {
+                deleteUriQuietly(resolver, target);
+                throw new FolderUnavailableException("IO_FAILED", "تعذّر فتح الملف للكتابة: " + fileName);
+            }
             out.write(data);
             out.flush();
+        } catch (FolderUnavailableException e) {
+            throw e;
         } catch (IOException e) {
+            deleteUriQuietly(resolver, target);
+            throw new FolderUnavailableException("IO_FAILED", "تعذّرت كتابة " + fileName + ": " + e.getMessage());
+        } catch (Exception e) {
+            deleteUriQuietly(resolver, target);
             throw new FolderUnavailableException("IO_FAILED", "تعذّرت كتابة " + fileName + ": " + e.getMessage());
         }
+        return target;
     }
 
     /**
-     * Atomic replace: write to "<final>.tmp", read it back, compare SHA-256,
-     * then rename. If a SAF provider rejects `renameDocument` or mutates the
-     * display name during rename, falls back to a direct verified write to
-     * `finalName` and cleans up temporary files.
+     * Atomic replace: write to "<final>.tmp", read it back via its exact created Uri,
+     * compare SHA-256, then rename. If a SAF provider rejects `renameDocument` or mutates
+     * the display name during rename (e.g. appending `.bin` on Samsung/Android 13+),
+     * falls back to a direct verified write to `finalName` and cleans up temporary files.
      */
-    void writeAtomically(Uri tree, String finalName, byte[] data) throws FolderUnavailableException {
+    Uri writeAtomically(Uri tree, String finalName, byte[] data) throws FolderUnavailableException {
         assertSafeFileName(finalName);
         String stagingName = finalName + BackupArchiveConstants.STAGING_SUFFIX;
         String previousName = BackupArchiveConstants.PREVIOUS_PREFIX + finalName;
-        writeDocument(tree, stagingName, data);
+        ContentResolver resolver = context.getContentResolver();
+        Uri stagingUri = writeDocument(tree, stagingName, data);
         String expected = BackupArchive.sha256Hex(data);
         byte[] readBack;
         try {
-            Uri stagingDoc = findDocument(tree, stagingName);
-            if (stagingDoc == null) throw new FolderUnavailableException("IO_FAILED", "الملف المؤقت اختفى أثناء الكتابة.");
-            readBack = read(stagingDoc, data.length + 1024L * 1024L);
+            readBack = read(stagingUri, data.length + 1024L * 1024L);
         } catch (FolderUnavailableException e) {
+            deleteUriQuietly(resolver, stagingUri);
             deleteQuietly(tree, stagingName);
             throw e;
         }
         String actual = BackupArchive.sha256Hex(readBack);
         readBack = null;
         if (!expected.equals(actual)) {
+            deleteUriQuietly(resolver, stagingUri);
             deleteQuietly(tree, stagingName);
             throw new FolderUnavailableException("VERIFY_FAILED", "المجلد أعاد بايتات مختلفة عن التي كُتبت — لم يتم اعتماد النسخة.");
         }
 
-        ContentResolver resolver = context.getContentResolver();
         boolean movedExistingToPrev = false;
         Uri renamedUri = null;
         try {
@@ -375,14 +466,12 @@ final class BackupStorage {
                     // provider without rename support: fall through to rename or direct fallback
                 }
             }
-            Uri stagingDoc = findDocument(tree, stagingName);
-            if (stagingDoc == null) throw new IOException("الملف المؤقت اختفى أثناء الكتابة.");
-            renamedUri = DocumentsContract.renameDocument(resolver, stagingDoc, finalName);
+            renamedUri = DocumentsContract.renameDocument(resolver, stagingUri, finalName);
             // Verify the provider actually gave the document the exact requested display name.
             Uri committed = findDocument(tree, finalName);
             if (committed != null) {
                 deleteQuietly(tree, previousName);
-                return;
+                return committed;
             }
             Log.w(TAG, "renameDocument did not produce expected display name " + finalName + "; falling back to direct verified write");
         } catch (Exception e) {
@@ -391,30 +480,29 @@ final class BackupStorage {
 
         // Clean up any renamed artifact with an unexpected display name before direct write.
         if (renamedUri != null) {
-            try {
-                DocumentsContract.deleteDocument(resolver, renamedUri);
-            } catch (Exception ignored) {
-                // best effort
-            }
+            deleteUriQuietly(resolver, renamedUri);
         }
 
         // Resilient fallback: direct verified write to `finalName`, then remove staging & previous.
+        Uri finalDoc = null;
         try {
-            writeDocument(tree, finalName, data);
-            Uri finalDoc = findDocument(tree, finalName);
-            if (finalDoc == null) {
-                throw new FolderUnavailableException("IO_FAILED", "تعذّر العثور على الملف بعد الكتابة المباشرة: " + finalName);
-            }
+            finalDoc = writeDocument(tree, finalName, data);
             byte[] directReadBack = read(finalDoc, data.length + 1024L * 1024L);
             String directActual = BackupArchive.sha256Hex(directReadBack);
             directReadBack = null;
             if (!expected.equals(directActual)) {
+                deleteUriQuietly(resolver, finalDoc);
                 deleteQuietly(tree, finalName);
                 throw new FolderUnavailableException("VERIFY_FAILED", "المجلد أعاد بايتات مختلفة عن التي كُتبت — لم يتم اعتماد النسخة.");
             }
+            deleteUriQuietly(resolver, stagingUri);
             deleteQuietly(tree, stagingName);
             deleteQuietly(tree, previousName);
+            return finalDoc;
         } catch (FolderUnavailableException e) {
+            if (finalDoc != null) {
+                deleteUriQuietly(resolver, finalDoc);
+            }
             if (movedExistingToPrev && findDocument(tree, finalName) == null) {
                 try {
                     Uri prevDoc = findDocument(tree, previousName);
@@ -423,8 +511,18 @@ final class BackupStorage {
                     // best effort restore of previous file
                 }
             }
+            deleteUriQuietly(resolver, stagingUri);
             deleteQuietly(tree, stagingName);
             throw e;
+        }
+    }
+
+    private static void deleteUriQuietly(ContentResolver resolver, Uri uri) {
+        if (uri == null) return;
+        try {
+            DocumentsContract.deleteDocument(resolver, uri);
+        } catch (Exception ignored) {
+            // best effort
         }
     }
 
@@ -445,9 +543,10 @@ final class BackupStorage {
     void cleanupStaging(Uri tree) {
         try {
             for (Entry entry : listBackupFiles()) {
-                String lower = entry.fileName.toLowerCase();
+                String lower = entry.fileName.toLowerCase(Locale.ROOT);
                 if (
                     lower.endsWith(BackupArchiveConstants.STAGING_SUFFIX) ||
+                    lower.endsWith(BackupArchiveConstants.STAGING_SUFFIX + ".bin") ||
                     entry.fileName.startsWith(BackupArchiveConstants.PREVIOUS_PREFIX)
                 ) {
                     deleteQuietly(tree, entry.fileName);

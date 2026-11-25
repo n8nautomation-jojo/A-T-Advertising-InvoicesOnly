@@ -27,6 +27,7 @@ interface SupplierAllocationSectionProps {
   openInvoices: SupplierInvoiceSummary[];
   rows: AllocationFormRow[];
   setRows: React.Dispatch<React.SetStateAction<AllocationFormRow[]>>;
+  onRowAmountChange?: (index: number, nextAmount: string) => void;
   paymentAmount: number;
   allocatedTotal: number;
   currencyLabel?: string;
@@ -38,6 +39,7 @@ export function SupplierAllocationSection({
   openInvoices,
   rows,
   setRows,
+  onRowAmountChange,
   paymentAmount,
   allocatedTotal,
   currencyLabel = getCurrencyShortLabel("SDG"),
@@ -109,13 +111,16 @@ export function SupplierAllocationSection({
             <Input
               inputMode="decimal"
               value={row.amount}
-              onChange={(e) =>
-                setRows((c) =>
-                  c.map((r, i) =>
-                    i === index ? { ...r, amount: sanitizePositiveDecimal(e.target.value) } : r
-                  )
-                )
-              }
+              onChange={(e) => {
+                const cleaned = sanitizePositiveDecimal(e.target.value);
+                if (onRowAmountChange) {
+                  onRowAmountChange(index, cleaned);
+                } else {
+                  setRows((c) =>
+                    c.map((r, i) => (i === index ? { ...r, amount: cleaned } : r))
+                  );
+                }
+              }}
               placeholder="0"
               className="h-9 w-24 rounded-lg text-[11px] font-bold bg-background text-center tabular-nums"
             />

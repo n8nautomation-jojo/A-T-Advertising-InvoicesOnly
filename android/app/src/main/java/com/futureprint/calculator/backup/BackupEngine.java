@@ -128,10 +128,13 @@ public final class BackupEngine {
                 FileRecord newest = newestVerified(listed);
 
                 if (skipIfUnchanged && newest != null && newest.sha256 != null && newest.sha256.equalsIgnoreCase(payloadSha)) {
+                    storage.cleanupStaging(tree);
+                    JSONArray pruned = prune(tree, newest.fileName);
                     result.put("ok", true);
                     result.put("skipped", true);
                     result.put("skipReason", "up-to-date");
                     result.put("backupId", newest.manifest.optString("backupId"));
+                    result.put("pruned", pruned);
                     prefs(context).edit().putString("last_backup_at", isoNow()).putString("last_backup_status", "ok").remove("last_backup_message").commit();
                     return result;
                 }
@@ -160,7 +163,7 @@ public final class BackupEngine {
                 }
 
                 String fileName = BackupArchiveConstants.FILE_PREFIX + backupId + BackupArchiveConstants.FILE_SUFFIX;
-                storage.writeAtomically(tree, fileName, archive);
+                Uri writtenUri = storage.writeAtomically(tree, fileName, archive);
 
                 int archiveLen = archive.length;
                 String archiveSha = BackupArchive.sha256Hex(archive);
@@ -168,7 +171,7 @@ public final class BackupEngine {
                 archive = null;
 
                 // Re-read what actually landed in the folder and verify it in a single decode pass.
-                byte[] stored = storage.readFile(fileName);
+                byte[] stored = storage.readFileByUriOrName(writtenUri, tree, fileName);
                 String storedSha = BackupArchive.sha256Hex(stored);
                 DecodedEnvelope verifiedEnvelope;
                 try {
@@ -221,6 +224,12 @@ public final class BackupEngine {
             } catch (BackupException e) {
                 return recordBackupFailure(result, e.code, e.getMessage());
             } catch (BackupStorage.FolderUnavailableException e) {
+                if (
+                    "NO_FOLDER".equals(e.code) &&
+                    ("transaction".equals(kind) || "daily".equals(kind) || "weekly".equals(kind) || "monthly".equals(kind))
+                ) {
+                    return failure(result, e.code, e.getMessage());
+                }
                 return recordBackupFailure(result, e.code, e.getMessage());
             } catch (DatabaseSnapshotter.SnapshotException e) {
                 return recordBackupFailure(result, e.code, e.getMessage());
@@ -561,17 +570,47 @@ public final class BackupEngine {
             storage.deleteQuietly(tree, name);
             pruned.put(name);
         }
+        if (pruned.length() > 0) {
+            clearInspectionCache();
+        }
         return pruned;
+    }
+
+    /** Runs retention pruning on demand without creating a new backup file. */
+    public JSONObject pruneBackups() {
+        synchronized (LOCK) {
+            JSONObject out = new JSONObject();
+            try {
+                Uri tree = storage.requireFolder();
+                storage.cleanupStaging(tree);
+                List<FileRecord> listed = listBackupsInternal(tree);
+                FileRecord newest = newestVerified(listed);
+                JSONArray pruned = prune(tree, newest == null ? null : newest.fileName);
+                if (pruned.length() > 0) {
+                    clearInspectionCache();
+                }
+                out.put("ok", true);
+                out.put("pruned", pruned);
+                out.put("prunedCount", pruned.length());
+                return out;
+            } catch (BackupStorage.FolderUnavailableException e) {
+                return failure(out, e.code, e.getMessage());
+            } catch (Exception e) {
+                Log.e(TAG, "pruneBackups failed", e);
+                return failure(out, "IO_FAILED", String.valueOf(e.getMessage()));
+            }
+        }
     }
 
     private JSONObject policy() {
         SharedPreferences p = prefs(context);
         JSONObject policy = new JSONObject();
         try {
-            policy.put("daily", p.getInt("retention_daily", 7));
+            policy.put("daily", p.getInt("retention_daily", 30));
             policy.put("weekly", p.getInt("retention_weekly", 4));
-            policy.put("monthly", p.getInt("retention_monthly", 12));
+            policy.put("monthly", p.getInt("retention_monthly", 1));
             policy.put("keepMinimum", p.getInt("retention_min", 2));
+            policy.put("maxAgeDays", p.getInt("retention_max_age_days", 30));
         } catch (JSONException ignored) {
             // unreachable
         }
@@ -1196,6 +1235,16 @@ public final class BackupEngine {
 
     public String getPreferredFolder() {
         return prefs(context).getString("preferred_folder_uri", "");
+    }
+
+    /** Clears a previous failure state (e.g., when the user selects/re-links a backup folder). */
+    public void clearLastFailureState() {
+        synchronized (LOCK) {
+            SharedPreferences p = prefs(context);
+            if ("failed".equals(p.getString("last_backup_status", "never"))) {
+                p.edit().putString("last_backup_status", "never").remove("last_backup_message").commit();
+            }
+        }
     }
 
     /** Called once at plugin load so an older database gets a physical version. */

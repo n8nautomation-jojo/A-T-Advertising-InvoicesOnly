@@ -397,7 +397,7 @@ export function CustomersPage() {
         onScroll={(e) => {
           setShowScrollTop(e.currentTarget.scrollTop > 300);
         }}
-        className="w-full flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-5 min-w-0 scroll-smooth touch-pan-y pb-28 md:pb-12"
+        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-28 md:pb-12"
         dir="rtl"
       >
         <div className="mx-auto max-w-7xl space-y-3.5 sm:space-y-4 w-full">

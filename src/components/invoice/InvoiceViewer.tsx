@@ -114,7 +114,7 @@ export function InvoiceViewer({ invoice, isVisible = true }: { invoice: Invoice;
           {({ zoomIn, zoomOut, resetTransform }) => (
             <>
               <TransformComponent
-                wrapperStyle={{ width: "100%", height: "100%" }}
+                wrapperStyle={{ width: "100%", height: "100%", touchAction: "none" }}
                 contentStyle={{
                   display: "flex",
                   flexDirection: "column",

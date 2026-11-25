@@ -200,7 +200,7 @@ export function ReportsWorkspace() {
 
   return (
     <PageShell>
-      <main className="mx-auto flex w-full max-w-md flex-1 min-h-0 flex-col gap-4 overflow-y-auto overflow-x-hidden px-3.5 sm:px-4 py-4 pb-36 md:max-w-4xl md:pb-16 touch-pan-y overscroll-contain">
+      <main className="mx-auto flex w-full max-w-md flex-1 min-h-0 flex-col gap-4 overflow-y-auto overflow-x-hidden px-3.5 sm:px-4 py-4 pb-36 md:max-w-4xl md:pb-16 overscroll-y-contain">
         <ReportsHeader
           from={from}
           to={to}

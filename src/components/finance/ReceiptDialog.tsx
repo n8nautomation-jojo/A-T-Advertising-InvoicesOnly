@@ -18,7 +18,13 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { addCustomer, useCustomers } from "@/lib/customersStore";
-import { getAllAccounts, getDefaultAccountId } from "@/lib/repositories/FinancialAccountRepository";
+import { normalizeCustomerName } from "@/lib/customers/customerMatching";
+import { linkUnlinkedInvoiceToCustomer } from "@/lib/repositories/CustomerRepository";
+import {
+  ensureAccountForCurrency,
+  getAllAccounts,
+  getDefaultAccountId,
+} from "@/lib/repositories/FinancialAccountRepository";
 import {
   getCustomerAccount,
   getOpenSalesInvoices,
@@ -28,7 +34,12 @@ import {
 import { recordCustomerReceipt } from "@/lib/repositories/PaymentRepository";
 import { notifyFinanceUpdated } from "@/lib/financeStore";
 import { getLocalIsoDate } from "@/lib/dateUtils";
-import { PAYMENT_METHOD_LABELS, type FinancialAccount, type PaymentMethod } from "@/lib/domain/finance";
+import {
+  getPreferredAccountForCurrency,
+  PAYMENT_METHOD_LABELS,
+  type FinancialAccount,
+  type PaymentMethod,
+} from "@/lib/domain/finance";
 import { formatNumber } from "@/lib/printCalculator";
 import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { DEFAULT_CURRENCY, sanitizeCurrency, type AppCurrency } from "@/lib/currency/types";
@@ -59,14 +70,14 @@ function resolveCustomerIdForInvoice(
   if (invoice.customerId && customers.some((c) => c.id === invoice.customerId)) {
     return invoice.customerId;
   }
-  const normalizedParty = invoice.customerName.trim().toLowerCase();
+  const normalizedParty = normalizeCustomerName(invoice.customerName);
   if (!normalizedParty) return "";
-  return customers.find((c) => c.name.trim().toLowerCase() === normalizedParty)?.id ?? "";
+  return customers.find((c) => normalizeCustomerName(c.name) === normalizedParty)?.id ?? "";
 }
 
 /**
  * تسجيل تحصيل من العميل مع تخصيص صريح للفواتير (PRD §6.2، §4.2).
- * المبلغ غير المخصَّص يبقى دفعة مقدّمة مشروعة، لا خطأ.
+ * يدعم السداد الكلي والجزئي بمرونة عبر جميع العملات (`SDG`, `USD`, `SAR`, `EGP`).
  */
 export function ReceiptDialog({
   open,
@@ -91,7 +102,7 @@ export function ReceiptDialog({
   const [customerId, setCustomerId] = useState("");
   const [amount, setAmount] = useState("");
   const [paidAt, setPaidAt] = useState(() => getLocalIsoDate());
-  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [method, setMethod] = useState<PaymentMethod>("bank_transfer");
   const [accountId, setAccountId] = useState("");
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState<AllocationFormRow[]>([]);
@@ -123,7 +134,7 @@ export function ReceiptDialog({
     let cancelled = false;
     setLoadingInit(true);
     setNotes("");
-    setMethod("cash");
+    setMethod("bank_transfer");
     setPaidAt(getLocalIsoDate());
     setDuplicateWarning(null);
     setQuickAddOpen(false);
@@ -147,12 +158,15 @@ export function ReceiptDialog({
           const resolvedCurrency = invoice
             ? sanitizeCurrency(invoice.currency, fallbackCurrency)
             : fallbackCurrency;
+          const preferred = getPreferredAccountForCurrency(accountList, resolvedCurrency);
           const matching = accountList.filter(
             (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === resolvedCurrency
           );
           setCurrency(resolvedCurrency);
           setAccountId((current) =>
-            current && matching.some((a) => a.id === current) ? current : matching[0]?.id ?? ""
+            current && matching.some((a) => a.id === current)
+              ? current
+              : preferred?.id ?? matching[0]?.id ?? ""
           );
 
           const matchedCustomerId = invoice
@@ -166,12 +180,15 @@ export function ReceiptDialog({
             setQuickCustomerName(invoice.customerName.trim());
           }
         } else {
+          const preferred = getPreferredAccountForCurrency(accountList, fallbackCurrency);
           const matching = accountList.filter(
             (a) => sanitizeCurrency(a.currency, DEFAULT_CURRENCY) === fallbackCurrency
           );
           setCurrency(fallbackCurrency);
           setAccountId((current) =>
-            current && matching.some((a) => a.id === current) ? current : matching[0]?.id ?? ""
+            current && matching.some((a) => a.id === current)
+              ? current
+              : preferred?.id ?? matching[0]?.id ?? ""
           );
           setCustomerId(initialCustomerId ?? "");
           setRows([]);
@@ -194,12 +211,13 @@ export function ReceiptDialog({
 
   useEffect(() => {
     if (!open || loadingInit) return;
+    const preferred = getPreferredAccountForCurrency(accounts, currency);
     setAccountId((current) =>
       current && selectableAccounts.some((a) => a.id === current)
         ? current
-        : selectableAccounts[0]?.id ?? ""
+        : preferred?.id ?? selectableAccounts[0]?.id ?? ""
     );
-  }, [open, loadingInit, selectableAccounts]);
+  }, [open, loadingInit, selectableAccounts, accounts, currency]);
 
   useEffect(() => {
     if (!open || !customerId) {
@@ -226,12 +244,12 @@ export function ReceiptDialog({
 
   const customerOpenInvoices = useMemo(() => {
     if (!customerId) return [];
-    const targetName = selectedCustomer?.name.trim().toLowerCase() ?? "";
+    const targetName = selectedCustomer ? normalizeCustomerName(selectedCustomer.name) : "";
     return openInvoices.filter(
       (inv) =>
         sanitizeCurrency(inv.currency, DEFAULT_CURRENCY) === currency &&
         (inv.customerId === customerId ||
-          (Boolean(targetName) && inv.customerName.trim().toLowerCase() === targetName))
+          (Boolean(targetName) && normalizeCustomerName(inv.customerName) === targetName))
     );
   }, [openInvoices, customerId, selectedCustomer, currency]);
 
@@ -246,6 +264,45 @@ export function ReceiptDialog({
     const usedIds = new Set(rows.map((r) => r.invoiceId));
     return customerOpenInvoices.filter((inv) => !usedIds.has(inv.id));
   }, [customerOpenInvoices, rows]);
+
+  const handleMainAmountChange = (rawVal: string) => {
+    const cleaned = sanitizePositiveDecimal(rawVal);
+    setAmount(cleaned);
+    setDuplicateWarning(null);
+
+    // Bi-directional single-invoice partial/full payment sync:
+    // keeps the single allocated invoice row in lockstep so partial payment never triggers
+    // "مجموع التخصيصات يتجاوز قيمة الدفعة".
+    if (rows.length === 1) {
+      const targetRow = rows[0];
+      const inv = openInvoices.find((i) => i.id === targetRow.invoiceId);
+      const numeric = Number(cleaned) || 0;
+      const capped =
+        inv && inv.settlement.outstanding > 0
+          ? Math.min(numeric, inv.settlement.outstanding)
+          : numeric;
+      setRows([
+        {
+          invoiceId: targetRow.invoiceId,
+          amount: cleaned === "" ? "" : capped > 0 ? String(capped) : "",
+        },
+      ]);
+    }
+  };
+
+  const handleRowAmountChange = (index: number, cleanedRowVal: string) => {
+    setDuplicateWarning(null);
+    const prevRowVal = rows[index]?.amount ?? "";
+    const nextRows = rows.map((r, i) => (i === index ? { ...r, amount: cleanedRowVal } : r));
+    setRows(nextRows);
+
+    const nextAllocated = nextRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    if (nextRows.length === 1 && (amount === prevRowVal || amount === "")) {
+      setAmount(cleanedRowVal);
+    } else if (nextAllocated > (Number(amount) || 0)) {
+      setAmount(String(Math.round(nextAllocated * 100) / 100));
+    }
+  };
 
   const handleCurrencyChange = (next: AppCurrency) => {
     if (isCurrencyLocked) return;
@@ -263,14 +320,14 @@ export function ReceiptDialog({
       setRows([]);
     } else {
       const nextCust = customers.find((c) => c.id === nextId);
-      const nextName = nextCust?.name.trim().toLowerCase() ?? "";
+      const nextName = nextCust ? normalizeCustomerName(nextCust.name) : "";
       setRows((current) =>
         current.filter((row) => {
           const inv = openInvoices.find((i) => i.id === row.invoiceId);
           if (!inv || sanitizeCurrency(inv.currency, DEFAULT_CURRENCY) !== currency) return false;
           return (
             inv.customerId === nextId ||
-            (Boolean(nextName) && inv.customerName.trim().toLowerCase() === nextName)
+            (Boolean(nextName) && normalizeCustomerName(inv.customerName) === nextName)
           );
         })
       );
@@ -292,6 +349,14 @@ export function ReceiptDialog({
         address: "",
         balance: 0,
       });
+      if (initialInvoiceId) {
+        await linkUnlinkedInvoiceToCustomer(initialInvoiceId, created.id).catch(() => {});
+        setOpenInvoices((prev) =>
+          prev.map((inv) =>
+            inv.id === initialInvoiceId ? { ...inv, customerId: created.id } : inv
+          )
+        );
+      }
       setCustomerId(created.id);
       setQuickCustomerName("");
       setQuickCustomerPhone("");
@@ -302,6 +367,18 @@ export function ReceiptDialog({
       toast.error(err instanceof Error ? err.message : "تعذّر إضافة العميل.");
     } finally {
       setCreatingCustomer(false);
+    }
+  };
+
+  const handleProvisionAccount = async () => {
+    try {
+      const acc = await ensureAccountForCurrency(currency);
+      const updated = await getAllAccounts();
+      setAccounts(updated);
+      setAccountId(acc.id);
+      toast.success(`تم تفعيل الحساب «${acc.name}» بعملة ${currencyLabel}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "تعذّر تفعيل الحساب.");
     }
   };
 
@@ -352,7 +429,7 @@ export function ReceiptDialog({
     const updated = rows.map((r, i) => (i === index ? { ...r, amount: String(fullAmount) } : r));
     const newTotal = updated.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
     setRows(updated);
-    if (newTotal > (Number(amount) || 0)) {
+    if (updated.length === 1 || newTotal > (Number(amount) || 0)) {
       setAmount(String(newTotal));
     }
   };
@@ -482,10 +559,7 @@ export function ReceiptDialog({
                 <Input
                   inputMode="decimal"
                   value={amount}
-                  onChange={(e) => {
-                    setAmount(sanitizePositiveDecimal(e.target.value));
-                    setDuplicateWarning(null);
-                  }}
+                  onChange={(e) => handleMainAmountChange(e.target.value)}
                   className="h-10 rounded-xl text-xs font-bold bg-background text-center tabular-nums"
                   placeholder="0"
                 />
@@ -546,11 +620,22 @@ export function ReceiptDialog({
             </div>
 
             {noMatchingAccount && (
-              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-start gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>
-                  لا يوجد حساب مالي بعملة {currency} ({currencyLabel}). يرجى إضافة حساب مالي بهذه العملة من صفحة المالية أولاً.
-                </span>
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 space-y-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    لا يوجد حساب مالي بعملة {currency} ({currencyLabel}). يرجى إضافة حساب مالي بهذه العملة من صفحة المالية أولاً.
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleProvisionAccount()}
+                  className="h-7 rounded-lg text-[10.5px] font-black border-amber-500/40"
+                >
+                  تفعيل حساب {currencyLabel} تلقائياً
+                </Button>
               </div>
             )}
 
@@ -560,6 +645,7 @@ export function ReceiptDialog({
               unallocatedCustomerInvoices={unallocatedCustomerInvoices}
               rows={rows}
               setRows={setRows}
+              onRowAmountChange={handleRowAmountChange}
               paymentAmount={paymentAmount}
               allocatedTotal={allocatedTotal}
               remaining={remaining}

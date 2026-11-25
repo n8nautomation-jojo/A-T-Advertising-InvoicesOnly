@@ -476,7 +476,7 @@ export function CustomerDetailPage({
       <main
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-5 min-w-0 scroll-smooth touch-pan-y pb-36 md:pb-16"
+        className="w-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-36 md:pb-16"
         dir="rtl"
       >
         <div className="mx-auto max-w-7xl space-y-3.5 sm:space-y-4 w-full">
@@ -800,7 +800,7 @@ export function CustomerDetailPage({
           </div>
 
           {/* 3. تبويبات مساحة العمل الكاملة */}
-          <div className="rounded-2xl border border-border/70 bg-card p-1 shadow-2xs flex items-center gap-1.5 text-xs font-black overflow-x-auto scrollbar-none touch-pan-x overscroll-x-contain select-none">
+          <div className="rounded-2xl border border-border/70 bg-card p-1 shadow-2xs flex items-center gap-1.5 text-xs font-black overflow-x-auto scrollbar-none overscroll-x-contain select-none">
             {[
               { key: "invoices" as const, label: `سجل الفواتير (${currentInvoicesForCurrency.length})` },
               { key: "statement" as const, label: `كشف الحساب المالي (${selectedCurrency}) (${statement?.lines.length || 0})` },
@@ -1017,7 +1017,12 @@ export function CustomerDetailPage({
         onOpenChange={setReceiptDialogOpen}
         initialCustomerId={customer.id}
         initialInvoiceId={targetReceiptInvoiceId}
-        defaultCurrency={sanitizeCurrency(selectedCurrency, "SDG")}
+        defaultCurrency={sanitizeCurrency(
+          selectedCurrency && selectedCurrency !== "ALL"
+            ? selectedCurrency
+            : financialProfile?.primaryCurrency,
+          "SDG"
+        )}
         onRecorded={() => {
           void loadAllCustomerData();
           onCustomerUpdated?.();

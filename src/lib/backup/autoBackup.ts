@@ -20,11 +20,13 @@ import { Capacitor } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
 import * as dbModule from "@/lib/database";
 import { backupBridge, isBackupEngineAvailable } from "./bridge";
+import { shouldCreateScheduledBackup } from "./retention";
 import { getBackupSettingsSnapshot, loadBackupSettings, recordBackupRun } from "./settingsStore";
+import { countBusinessRecords, countInvoices, newestVerified } from "./validation";
 import type { BackupKind, BackupRunResult } from "./types";
 
-const MIN_TRAILING_DEBOUNCE_MS = 5_000;
-const MAX_TRAILING_WAIT_MS = 60_000;
+const MIN_TRAILING_DEBOUNCE_MS = 3_000;
+const MAX_TRAILING_WAIT_MS = 10_000;
 
 function runWithWriteLock<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -66,6 +68,8 @@ let hasPendingChanges = false;
 let lastAttemptAt = 0;
 let trailingTimer: ReturnType<typeof setTimeout> | null = null;
 let appPauseListenerRegistered = false;
+let visibilityListenerRegistered = false;
+let visibilityHandler: (() => void) | null = null;
 
 type Listener = (result: BackupRunResult) => void;
 const listeners = new Set<Listener>();
@@ -118,6 +122,11 @@ export function resetAutoBackupStateForTests(): void {
   lastAttemptAt = 0;
   clearTrailingTimer();
   appPauseListenerRegistered = false;
+  if (visibilityHandler && typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", visibilityHandler);
+    visibilityHandler = null;
+  }
+  visibilityListenerRegistered = false;
   listeners.clear();
 }
 
@@ -138,11 +147,11 @@ export function triggerBackupAfterTransaction(reason = "transaction"): void {
  * Immediately flushes any pending transaction-triggered backup (bypassing the
  * throttle window). Invoked automatically when the app moves to background.
  */
-export async function flushPendingTransactionBackup(): Promise<BackupRunResult | null> {
+export async function flushPendingTransactionBackup(reason = "app-pause"): Promise<BackupRunResult | null> {
   if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable()) return null;
   if (!hasPendingChanges) return null;
   clearTrailingTimer();
-  return runQueue("transaction", "app-pause", true);
+  return runQueue("transaction", reason, true);
 }
 
 /**
@@ -188,8 +197,11 @@ async function runQueue(kind: BackupKind, reason: string, bypassThrottle: boolea
 
   running = true;
   try {
-    // Give the repository's async SQLite write a moment to land, then flush WAL passively without locking readers.
-    await new Promise((r) => setTimeout(r, 250));
+    // Give the repository's async SQLite write a moment to land unless the app is pausing/hiding right now.
+    const settleDelayMs = reason === "app-pause" || reason === "visibility-hidden" ? 0 : 250;
+    if (settleDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, settleDelayMs));
+    }
     await flushWalBeforeBackup("passive");
     const settingsNow = getBackupSettingsSnapshot();
     const result = await backupBridge.createBackup(kind, {
@@ -207,6 +219,11 @@ async function runQueue(kind: BackupKind, reason: string, bypassThrottle: boolea
       emit(emitted);
       return emitted;
     } else {
+      if (kind === "transaction" && result.errorCode === "NO_FOLDER") {
+        hasPendingChanges = false;
+        clearTrailingTimer();
+        return result;
+      }
       await recordBackupRun("failed", nowIso, result.message ?? result.errorCode ?? "خطأ غير معروف");
       emit(result);
       return result;
@@ -268,9 +285,201 @@ export async function createManualBackup(): Promise<BackupRunResult> {
 }
 
 /**
+ * Immediately creates an initial verified backup right after the user links or
+ * reconnects a SAF backup folder so their data is protected without waiting.
+ */
+export async function runInitialBackupAfterFolderLink(): Promise<BackupRunResult> {
+  if (!isBackupEngineAvailable()) {
+    return { ok: false, errorCode: "UNSUPPORTED", message: "النسخ الاحتياطي متاح داخل تطبيق أندرويد فقط." };
+  }
+  if (running) {
+    const deadline = Date.now() + 2_000;
+    while (running && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (running) {
+      return { ok: false, errorCode: "ALREADY_RUNNING", message: "هناك عملية نسخ احتياطي جارية بالفعل، انتظر قليلاً." };
+    }
+  }
+  running = true;
+  try {
+    await flushWalBeforeBackup("passive");
+    await loadBackupSettings();
+    const settings = getBackupSettingsSnapshot();
+
+    // New-phone transfer protection: if this device's DB is completely empty (0 business
+    // records) and the chosen folder already holds verified backups from a previous phone,
+    // do not clutter the folder with an empty snapshot — prompt the user to restore instead.
+    try {
+      if (typeof backupBridge.getStatus === "function") {
+        const preStatus = await backupBridge.getStatus();
+        if (preStatus?.ok && preStatus.status) {
+          const liveInvoices =
+            preStatus.status.database.invoiceCount ??
+            countInvoices(preStatus.status.database.counts);
+          const liveBusiness =
+            preStatus.status.database.totalBusinessRecords ??
+            countBusinessRecords(preStatus.status.database.counts);
+          const existingVerified = (preStatus.status.backups ?? []).filter(
+            (b) => b.status === "verified" && b.manifest
+          );
+          if (liveInvoices === 0 && liveBusiness === 0 && existingVerified.length > 0) {
+            const skippedRes: BackupRunResult = {
+              ok: true,
+              skipped: true,
+              skipReason: "empty-db-existing-backups",
+              message: `تم العثور على ${existingVerified.length} نسخة احتياطية سابقة في هذا المجلد — يمكنك استعادتها فوراً من زر (استعادة نسخة).`,
+            };
+            emit(skippedRes);
+            return skippedRes;
+          }
+        }
+      }
+    } catch {
+      // Non-fatal: proceed to create initial backup cleanly
+    }
+
+    const result = await backupBridge.createBackup("daily", {
+      skipIfUnchanged: false,
+      encrypt: settings.encryptionEnabled,
+    });
+    const nowIso = new Date().toISOString();
+    if (result.ok) {
+      lastAttemptAt = Date.now();
+      if (!queued) {
+        hasPendingChanges = false;
+        clearTrailingTimer();
+      }
+      await recordBackupRun("ok", nowIso, null);
+      emit(result);
+      return result;
+    } else {
+      await recordBackupRun("failed", nowIso, result.message ?? result.errorCode ?? "خطأ غير معروف");
+      emit(result);
+      return result;
+    }
+  } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const message = rawMsg === "NATIVE_UNAVAILABLE" ? "وحدة النسخ الاحتياطي غير متوفرة في هذه النسخة." : rawMsg;
+    await recordBackupRun("failed", new Date().toISOString(), message);
+    const failed: BackupRunResult = { ok: false, errorCode: "IO_FAILED", message };
+    emit(failed);
+    return failed;
+  } finally {
+    running = false;
+    if (queued) {
+      queued = false;
+      hasPendingChanges = true;
+      scheduleTrailingBackup(MIN_TRAILING_DEBOUNCE_MS, "queued");
+    }
+  }
+}
+
+/**
+ * Catches up any missed daily or transaction backup on app startup or resume
+ * (essential on OEM Android phones that delay or kill background WorkManager jobs).
+ */
+export async function runCatchUpAutoBackupIfNeeded(): Promise<BackupRunResult | null> {
+  if (!Capacitor.isNativePlatform() || !isBackupEngineAvailable() || running) return null;
+  await loadBackupSettings();
+  const settings = getBackupSettingsSnapshot();
+  if (!settings.autoDaily && !settings.afterTransaction) return null;
+
+  let statusRes: Awaited<ReturnType<typeof backupBridge.getStatus>> | null = null;
+  try {
+    if (typeof backupBridge.getStatus !== "function") return null;
+    statusRes = await backupBridge.getStatus();
+  } catch {
+    return null;
+  }
+  if (!statusRes?.ok || !statusRes.status || statusRes.status.storage?.state !== "ok") {
+    return null;
+  }
+
+  const status = statusRes.status;
+  const backups = status.backups ?? [];
+  const verified = backups.filter((b) => b.status === "verified" && b.sha256Ok && b.manifest);
+  const nowMs = Date.now();
+
+  const needsInitial = verified.length === 0;
+  const needsDaily =
+    settings.autoDaily &&
+    shouldCreateScheduledBackup("daily", nowMs, backups, new Date().getTimezoneOffset());
+
+  let needsTransactionCatchUp = false;
+  if (settings.afterTransaction) {
+    if (hasPendingChanges) {
+      needsTransactionCatchUp = true;
+    } else {
+      const newest = newestVerified(backups);
+      if (newest?.manifest) {
+        const dbInvoices = status.database.invoiceCount ?? countInvoices(status.database.counts);
+        const dbBusiness = status.database.totalBusinessRecords ?? countBusinessRecords(status.database.counts);
+        const backupInvoices = newest.manifest.invoiceCount ?? countInvoices(newest.manifest.counts);
+        const backupBusiness = newest.manifest.totalBusinessRecords ?? countBusinessRecords(newest.manifest.counts);
+        const newestMs = Date.parse(newest.manifest.createdAt);
+        const lastChangeMs = settings.lastDataChangeAt ? Date.parse(settings.lastDataChangeAt) : NaN;
+        if (
+          backupInvoices < dbInvoices ||
+          backupBusiness < dbBusiness ||
+          (Number.isFinite(lastChangeMs) && Number.isFinite(newestMs) && lastChangeMs > newestMs + 2_000)
+        ) {
+          needsTransactionCatchUp = true;
+        }
+      }
+    }
+  }
+
+  if (!needsInitial && !needsDaily && !needsTransactionCatchUp) return null;
+  if (running) return null;
+
+  const kind: BackupKind = needsDaily ? "daily" : "transaction";
+  const skipIfUnchanged = verified.length > 0;
+  running = true;
+  try {
+    await flushWalBeforeBackup("passive");
+    const settingsNow = getBackupSettingsSnapshot();
+    const result = await backupBridge.createBackup(kind, {
+      skipIfUnchanged,
+      encrypt: settingsNow.encryptionEnabled,
+    });
+    const nowIso = new Date().toISOString();
+    if (result.ok) {
+      lastAttemptAt = Date.now();
+      if (!queued) {
+        hasPendingChanges = false;
+        clearTrailingTimer();
+      }
+      await recordBackupRun("ok", nowIso, null);
+      emit(result);
+      return result;
+    }
+    if (result.errorCode !== "NO_FOLDER") {
+      await recordBackupRun("failed", nowIso, result.message ?? result.errorCode ?? "خطأ غير معروف");
+      emit(result);
+    }
+    return result;
+  } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const message = rawMsg === "NATIVE_UNAVAILABLE" ? "وحدة النسخ الاحتياطي غير متوفرة في هذه النسخة." : rawMsg;
+    await recordBackupRun("failed", new Date().toISOString(), message);
+    const failed: BackupRunResult = { ok: false, errorCode: "IO_FAILED", message };
+    emit(failed);
+    return failed;
+  } finally {
+    running = false;
+    if (queued) {
+      queued = false;
+      hasPendingChanges = true;
+      scheduleTrailingBackup(MIN_TRAILING_DEBOUNCE_MS, "queued");
+    }
+  }
+}
+
+/**
  * Ensures the daily schedule exists (idempotent; WorkManager de-duplicates by
- * unique work name) and attaches the app-pause flush listener once. Called at app start
- * and after restoring a backup.
+ * unique work name) and attaches the app-pause/resume & visibility flush listeners
+ * once. Called at app start and after restoring a backup.
  */
 export async function ensureScheduledBackups(): Promise<void> {
   if (!isBackupEngineAvailable()) return;
@@ -278,12 +487,31 @@ export async function ensureScheduledBackups(): Promise<void> {
     appPauseListenerRegistered = true;
     void CapApp.addListener("appStateChange", ({ isActive }) => {
       if (!isActive) {
-        void flushPendingTransactionBackup();
+        if (hasPendingChanges) {
+          void flushPendingTransactionBackup("app-pause");
+          if (typeof backupBridge.scheduleImmediateCatchUp === "function") {
+            void backupBridge.scheduleImmediateCatchUp().catch(() => {});
+          }
+        }
+      } else {
+        void runCatchUpAutoBackupIfNeeded();
       }
     }).catch((err) => {
       appPauseListenerRegistered = false;
       console.warn("[AutoBackup] could not register appStateChange listener:", err);
     });
+  }
+  if (!visibilityListenerRegistered && Capacitor.isNativePlatform() && typeof document !== "undefined") {
+    visibilityListenerRegistered = true;
+    visibilityHandler = () => {
+      if (document.visibilityState === "hidden" && hasPendingChanges) {
+        void flushPendingTransactionBackup("visibility-hidden");
+        if (typeof backupBridge.scheduleImmediateCatchUp === "function") {
+          void backupBridge.scheduleImmediateCatchUp().catch(() => {});
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", visibilityHandler);
   }
   try {
     await loadBackupSettings();
@@ -292,13 +520,16 @@ export async function ensureScheduledBackups(): Promise<void> {
     await backupBridge.saveSettings({
       encryptionEnabled: settings.encryptionEnabled,
       autoDaily: settings.autoDaily,
+      afterTransaction: settings.afterTransaction,
       retentionDaily: settings.retention.daily,
       retentionWeekly: settings.retention.weekly,
       retentionMonthly: settings.retention.monthly,
       retentionMinimum: settings.retention.keepMinimum,
+      retentionMaxAgeDays: settings.retention.maxAgeDays ?? 30,
       staleAfterHours: settings.staleAfterHours,
       transactionThrottleMinutes: settings.transactionThrottleMinutes,
     });
+    void runCatchUpAutoBackupIfNeeded();
   } catch (err) {
     console.warn("[AutoBackup] could not ensure schedule:", err);
   }

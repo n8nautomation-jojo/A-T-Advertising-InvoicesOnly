@@ -103,7 +103,7 @@ export function ReportsPerformanceView({ performance, currency = DEFAULT_CURRENC
             <p className="text-xs text-muted-foreground">لا توجد مصروفات تشغيلية مسجلة في هذه الفترة.</p>
           </div>
         ) : (
-          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+          <div className="space-y-1.5 max-h-60 overflow-y-auto overscroll-y-auto pr-1">
             {performance.operatingExpenseRows.map((exp) => (
               <div
                 key={exp.id}

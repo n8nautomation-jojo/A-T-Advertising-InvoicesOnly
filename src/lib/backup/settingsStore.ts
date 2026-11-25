@@ -35,10 +35,14 @@ export function getBackupSettingsSnapshot(): BackupSettings {
 function sanitize(raw: any): BackupSettings {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_BACKUP_SETTINGS, retention: { ...DEFAULT_BACKUP_SETTINGS.retention } };
   const retention: RetentionPolicy = {
-    daily: clampInt(raw.retention?.daily, 1, 60, DEFAULT_BACKUP_SETTINGS.retention.daily),
-    weekly: clampInt(raw.retention?.weekly, 1, 52, DEFAULT_BACKUP_SETTINGS.retention.weekly),
-    monthly: clampInt(raw.retention?.monthly, 1, 120, DEFAULT_BACKUP_SETTINGS.retention.monthly),
+    daily: clampInt(raw.retention?.daily, 1, 90, DEFAULT_BACKUP_SETTINGS.retention.daily),
+    weekly: clampInt(raw.retention?.weekly, 0, 52, DEFAULT_BACKUP_SETTINGS.retention.weekly),
+    monthly: clampInt(raw.retention?.monthly, 0, 120, DEFAULT_BACKUP_SETTINGS.retention.monthly),
     keepMinimum: clampInt(raw.retention?.keepMinimum, 1, 10, DEFAULT_BACKUP_SETTINGS.retention.keepMinimum),
+    maxAgeDays:
+      raw.retention?.maxAgeDays === 0
+        ? 0
+        : clampInt(raw.retention?.maxAgeDays, 7, 365, DEFAULT_BACKUP_SETTINGS.retention.maxAgeDays ?? 30),
   };
   return {
     folderUri: typeof raw.folderUri === "string" ? raw.folderUri : "",
@@ -75,6 +79,7 @@ function nativeSettingsTouched(patch: Partial<BackupSettings>): boolean {
   return (
     Object.prototype.hasOwnProperty.call(patch, "encryptionEnabled") ||
     Object.prototype.hasOwnProperty.call(patch, "autoDaily") ||
+    Object.prototype.hasOwnProperty.call(patch, "afterTransaction") ||
     Object.prototype.hasOwnProperty.call(patch, "retention") ||
     Object.prototype.hasOwnProperty.call(patch, "staleAfterHours") ||
     Object.prototype.hasOwnProperty.call(patch, "transactionThrottleMinutes")
@@ -142,10 +147,12 @@ export async function saveBackupSettings(patch: Partial<BackupSettings>): Promis
         await backupBridge.saveSettings({
           encryptionEnabled: snapshot.encryptionEnabled,
           autoDaily: snapshot.autoDaily,
+          afterTransaction: snapshot.afterTransaction,
           retentionDaily: snapshot.retention.daily,
           retentionWeekly: snapshot.retention.weekly,
           retentionMonthly: snapshot.retention.monthly,
           retentionMinimum: snapshot.retention.keepMinimum,
+          retentionMaxAgeDays: snapshot.retention.maxAgeDays ?? 30,
           staleAfterHours: snapshot.staleAfterHours,
           transactionThrottleMinutes: snapshot.transactionThrottleMinutes,
         });

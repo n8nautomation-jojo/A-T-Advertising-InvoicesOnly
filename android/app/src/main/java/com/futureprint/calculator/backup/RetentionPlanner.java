@@ -41,10 +41,22 @@ final class RetentionPlanner {
     private RetentionPlanner() {}
 
     static List<String> plan(List<BackupEngine.FileRecord> verified, JSONObject policy, int offsetMinutes, String protectName) {
-        int dailyLimit = Math.max(0, policy.optInt("daily", 7));
-        int weeklyLimit = Math.max(0, policy.optInt("weekly", 4));
-        int monthlyLimit = Math.max(0, policy.optInt("monthly", 12));
-        int keepMinimum = Math.max(0, policy.optInt("keepMinimum", 2));
+        return plan(verified, policy, offsetMinutes, protectName, System.currentTimeMillis());
+    }
+
+    static List<String> plan(
+        List<BackupEngine.FileRecord> verified,
+        JSONObject policy,
+        int offsetMinutes,
+        String protectName,
+        long nowMs
+    ) {
+        JSONObject effectivePolicy = policy == null ? new JSONObject() : policy;
+        int dailyLimit = Math.max(0, effectivePolicy.optInt("daily", 7));
+        int weeklyLimit = Math.max(0, effectivePolicy.optInt("weekly", 4));
+        int monthlyLimit = Math.max(0, effectivePolicy.optInt("monthly", 12));
+        int keepMinimum = Math.max(0, effectivePolicy.optInt("keepMinimum", 2));
+        int maxAgeDays = Math.max(0, effectivePolicy.optInt("maxAgeDays", 0));
 
         List<BackupEngine.FileRecord> sorted = new ArrayList<>();
         for (BackupEngine.FileRecord r : verified) if (r.manifest != null) sorted.add(r);
@@ -87,9 +99,26 @@ final class RetentionPlanner {
         collectExpired(daily, dailyLimit, candidates);
         collectExpired(weekly, weeklyLimit, candidates);
         collectExpired(monthly, monthlyLimit, candidates);
+
+        // Smart compaction for transaction backups older than 24 hours:
+        // keep only the newest 1 per past calendar day, in addition to MAX_TRANSACTION_BACKUPS (10).
+        long pastDayCutoffMs = nowMs - 86_400_000L;
+        Set<String> seenPastTxDays = new HashSet<>();
+        List<BackupEngine.FileRecord> survivingTransactions = new ArrayList<>();
+        for (BackupEngine.FileRecord r : transactions) {
+            long ts = createdAt(r);
+            if (ts > 0 && ts < pastDayCutoffMs) {
+                String dayKey = dailyKey(r.manifest.optString("createdAt", ""), offsetMinutes);
+                if (!seenPastTxDays.add(dayKey)) {
+                    candidates.add(r.fileName);
+                    continue;
+                }
+            }
+            survivingTransactions.add(r);
+        }
         // Keep newest MAX_TRANSACTION_BACKUPS transaction backups so they stay bounded.
-        for (int i = MAX_TRANSACTION_BACKUPS; i < transactions.size(); i++) {
-            candidates.add(transactions.get(i).fileName);
+        for (int i = MAX_TRANSACTION_BACKUPS; i < survivingTransactions.size(); i++) {
+            candidates.add(survivingTransactions.get(i).fileName);
         }
         // Cap pre-restore and pre-update safety backups at MAX_SAFETY_BACKUPS each.
         for (int i = MAX_SAFETY_BACKUPS; i < preRestore.size(); i++) {
@@ -97,6 +126,20 @@ final class RetentionPlanner {
         }
         for (int i = MAX_SAFETY_BACKUPS; i < preUpdate.size(); i++) {
             candidates.add(preUpdate.get(i).fileName);
+        }
+
+        // Rolling smart age retention: expire non-manual managed backups older than maxAgeDays.
+        if (maxAgeDays > 0) {
+            long cutoffMs = nowMs - (maxAgeDays * 86_400_000L);
+            for (BackupEngine.FileRecord r : sorted) {
+                String kind = r.manifest.optString("kind", "");
+                if (ALWAYS_KEEP_KINDS.contains(kind)) continue;
+                if (!isManagedKind(kind)) continue;
+                long ts = createdAt(r);
+                if (ts > 0 && ts < cutoffMs) {
+                    candidates.add(r.fileName);
+                }
+            }
         }
 
         Set<String> protectedNames = new HashSet<>();
@@ -129,6 +172,17 @@ final class RetentionPlanner {
             }
         });
         return prune;
+    }
+
+    private static boolean isManagedKind(String kind) {
+        return (
+            "daily".equals(kind) ||
+            "weekly".equals(kind) ||
+            "monthly".equals(kind) ||
+            "transaction".equals(kind) ||
+            "pre-update".equals(kind) ||
+            "pre-restore".equals(kind)
+        );
     }
 
     private static void collectExpired(

@@ -105,7 +105,7 @@ export function CustomInvoiceDialog({
           {/* تبويب 1: إدخال وتعديل البيانات */}
           <TabsContent
             value="edit"
-            className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3.5 m-0 scroll-smooth touch-pan-y min-h-0"
+            className="flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 space-y-3.5 m-0 min-h-0"
           >
             {/* محدد نوع الفاتورة */}
             <CustomInvoiceTypeSelector type={form.type} onChange={form.setType} />

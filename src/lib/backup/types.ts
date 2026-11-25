@@ -178,13 +178,16 @@ export interface RetentionPolicy {
   weekly: number;
   monthly: number;
   keepMinimum: number;
+  /** 0 or undefined = no hard day cutoff; > 0 = rolling smart retention window in days (e.g. 30 = last month). */
+  maxAgeDays?: number;
 }
 
 export const DEFAULT_RETENTION: RetentionPolicy = {
-  daily: 7,
+  daily: 30,
   weekly: 4,
-  monthly: 12,
+  monthly: 1,
   keepMinimum: 2,
+  maxAgeDays: 30,
 };
 
 /** Auto-backup cadence settings persisted in the settings table. */
@@ -223,7 +226,7 @@ export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   autoDaily: true,
   afterTransaction: true,
   retention: { ...DEFAULT_RETENTION },
-  transactionThrottleMinutes: 15,
+  transactionThrottleMinutes: 2,
   staleAfterHours: 48,
   lastBackupAt: null,
   lastBackupStatus: "never",

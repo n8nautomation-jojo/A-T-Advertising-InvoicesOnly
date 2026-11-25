@@ -9,9 +9,9 @@
 export const DB_NAME = "ta_invoicing_db";
 /**
  * الإصدار المنطقي للمخطط — يطابق آخر ترحيل في `migrations/index.ts`
- * (v7: نموذج الأعمال + الترقيم + التسويات + إدارة العملاء + المحاسبة متعددة العملات والفهارس + الخطابات الرسمية official_letters).
+ * (v8: نموذج الأعمال + الترقيم + التسويات + إدارة العملاء + المحاسبة متعددة العملات + الخطابات الرسمية + الحسابات البنكية الأربعة المعيارية).
  */
-export const DB_VERSION = 7;
+export const DB_VERSION = 8;
 
 /**
  * Complete DDL for version 1.
@@ -594,4 +594,48 @@ export const DEFAULT_CASH_ACCOUNT = {
   name: "الصندوق النقدي",
   kind: "cash",
 } as const;
+
+/**
+ * ═══════════════════════════════════════════════════════════════
+ * Schema v8 — Canonical 4-Currency Bank / Treasury Accounts
+ * ═══════════════════════════════════════════════════════════════
+ */
+export const V8_ADDED_COLUMNS: Record<string, Array<{ name: string; ddl: string }>> = {
+  financial_accounts: [
+    { name: "currency", ddl: "TEXT NOT NULL DEFAULT 'SDG'" },
+    { name: "account_number", ddl: "TEXT" },
+  ],
+};
+
+export const STANDARD_CURRENCY_ACCOUNTS = [
+  {
+    id: DEFAULT_CASH_ACCOUNT.id,
+    name: DEFAULT_CASH_ACCOUNT.name,
+    kind: DEFAULT_CASH_ACCOUNT.kind,
+    currency: "SDG",
+    defaultAccountNumber: "3283046",
+  },
+  {
+    id: "acc-bank-usd",
+    name: "حساب الدولار الأمريكي",
+    kind: "bank",
+    currency: "USD",
+    defaultAccountNumber: "",
+  },
+  {
+    id: "acc-bank-sar",
+    name: "حساب الريال السعودي",
+    kind: "bank",
+    currency: "SAR",
+    defaultAccountNumber: "",
+  },
+  {
+    id: "acc-bank-egp",
+    name: "حساب الجنيه المصري",
+    kind: "bank",
+    currency: "EGP",
+    defaultAccountNumber: "",
+  },
+] as const;
+
 

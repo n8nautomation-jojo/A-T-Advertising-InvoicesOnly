@@ -7,6 +7,10 @@ import {
   Calendar,
   Layers,
   HardDrive,
+  RefreshCw,
+  Clock,
+  Lock,
+  LockOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -88,6 +92,29 @@ export function BackupStatusHero({
         },
       ].filter((item) => item.count > 0)
     : [];
+
+  const autoDaily = dashboard.settings.autoDaily;
+  const afterTransaction = dashboard.settings.afterTransaction;
+  const autoBackupLabel =
+    autoDaily && afterTransaction
+      ? "النسخ التلقائي: مفعّل (فوري + يومي)"
+      : afterTransaction
+      ? "النسخ التلقائي: فوري فقط"
+      : autoDaily
+      ? "النسخ التلقائي: يومي فقط"
+      : "النسخ التلقائي: متوقف";
+  const autoBackupActive = autoDaily || afterTransaction;
+
+  const maxAgeDays = dashboard.settings.retention?.maxAgeDays ?? 30;
+  const retentionLabel =
+    maxAgeDays > 0
+      ? `الاحتفاظ الذكي: آخر ${maxAgeDays} يوماً`
+      : "الاحتفاظ الذكي: بلا حد زمني";
+
+  const encryptionEnabled = dashboard.settings.encryptionEnabled;
+  const encryptionLabel = encryptionEnabled
+    ? "التشفير: مفعّل (AES-256)"
+    : "التشفير: غير مفعّل";
 
   return (
     <div className="space-y-4">
@@ -204,6 +231,42 @@ export function BackupStatusHero({
         </div>
       )}
 
+      {/* Auto-Backup, Smart Retention & Encryption status pill row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold",
+            autoBackupActive
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border-border/70 bg-muted/40 text-muted-foreground"
+          )}
+        >
+          <RefreshCw className="h-3 w-3 shrink-0" />
+          <span>{autoBackupLabel}</span>
+        </span>
+
+        <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 px-2.5 py-1 text-[10px] font-bold text-primary">
+          <Clock className="h-3 w-3 shrink-0" />
+          <span>{retentionLabel}</span>
+        </span>
+
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold",
+            encryptionEnabled
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border-border/70 bg-muted/40 text-muted-foreground"
+          )}
+        >
+          {encryptionEnabled ? (
+            <Lock className="h-3 w-3 shrink-0" />
+          ) : (
+            <LockOpen className="h-3 w-3 shrink-0" />
+          )}
+          <span>{encryptionLabel}</span>
+        </span>
+      </div>
+
       {/* Folder location box */}
       <div className="rounded-xl border border-border/60 bg-muted/30 p-3 space-y-2">
         <div className="flex items-center justify-between gap-2">
@@ -223,10 +286,10 @@ export function BackupStatusHero({
             size="sm"
             variant="outline"
             onClick={onChooseFolder}
-            disabled={busy === "folder"}
+            disabled={busy === "folder" || busy === "folder-backup"}
             className="shrink-0 h-9 rounded-xl gap-1.5 text-xs font-bold border-primary/30 text-primary hover:bg-primary/5 active:scale-95 touch-manipulation"
           >
-            {busy === "folder" ? (
+            {busy === "folder" || busy === "folder-backup" ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <FolderOpen className="h-3.5 w-3.5" />
@@ -234,6 +297,13 @@ export function BackupStatusHero({
             <span>{dashboard.storage?.folderUri ? "تغيير المجلد" : "تحديد مجلد"}</span>
           </Button>
         </div>
+
+        {busy === "folder-backup" && (
+          <div className="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-2.5 py-2 text-[11px] font-bold text-primary">
+            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+            <span>جاري إنشاء أول نسخة تلقائية وتفعيل الحماية...</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -202,7 +202,7 @@ async function existingReceiptFingerprints(customerId: string): Promise<(Existin
   const db = await getDb();
   const [payRes, allocRes] = await Promise.all([
     db.query(
-      "SELECT id, amount, paid_at, method FROM customer_payments WHERE customer_id = ? AND cancelled_at IS NULL",
+      "SELECT id, amount, COALESCE(currency, 'SDG') AS currency, paid_at, method FROM customer_payments WHERE customer_id = ? AND cancelled_at IS NULL",
       [customerId]
     ),
     db.query(
@@ -223,6 +223,7 @@ async function existingReceiptFingerprints(customerId: string): Promise<(Existin
   return (payRes.values ?? []).map((row: any) => ({
     id: String(row.id),
     amount: Number(row.amount) || 0,
+    currency: sanitizeCurrency(row.currency, "SDG"),
     paidAt: String(row.paid_at),
     method: String(row.method ?? "cash"),
     invoiceIds: allocsByPayment.get(String(row.id)) ?? [],
@@ -233,7 +234,7 @@ async function existingSupplierFingerprints(supplierId: string): Promise<(Existi
   const db = await getDb();
   const [payRes, allocRes] = await Promise.all([
     db.query(
-      "SELECT id, amount, paid_at, method FROM supplier_payments WHERE supplier_id = ? AND cancelled_at IS NULL",
+      "SELECT id, amount, COALESCE(currency, 'SDG') AS currency, paid_at, method FROM supplier_payments WHERE supplier_id = ? AND cancelled_at IS NULL",
       [supplierId]
     ),
     db.query(
@@ -254,6 +255,7 @@ async function existingSupplierFingerprints(supplierId: string): Promise<(Existi
   return (payRes.values ?? []).map((row: any) => ({
     id: String(row.id),
     amount: Number(row.amount) || 0,
+    currency: sanitizeCurrency(row.currency, "SDG"),
     paidAt: String(row.paid_at),
     method: String(row.method ?? "cash"),
     invoiceIds: allocsByPayment.get(String(row.id)) ?? [],
@@ -324,6 +326,7 @@ export async function recordCustomerReceipt(
       const duplicate = looksLikeDuplicatePayment(
         {
           amount,
+          currency,
           paidAt: input.paidAt,
           method: input.method ?? "cash",
           invoiceIds: validation.normalised.map((a) => a.invoiceId),
@@ -370,12 +373,17 @@ export async function recordCustomerReceipt(
           [newId("alloc", `${nowIso}-${allocation.invoiceId}-${allocation.amount}`), id, allocation.invoiceId, allocation.amount, nowIso],
           false
         );
+        await db.run(
+          `UPDATE custom_invoices SET customer_id = ? WHERE id = ? AND (customer_id IS NULL OR customer_id = '')`,
+          [input.customerId, allocation.invoiceId],
+          false
+        );
       }
 
       await db.run(
         `INSERT INTO financial_transactions
-           (id, kind, amount, currency, occurred_at, account_id, source_type, source_id, reference_note, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+           (id, kind, amount, currency, occurred_at, account_id, source_type, source_id, reference_note, notes, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         [
           `tx-${id}`,
           "receipt",
@@ -386,6 +394,7 @@ export async function recordCustomerReceipt(
           "customer_payment",
           id,
           allocated.reference,
+          input.notes ?? null,
           nowIso,
         ],
         false
@@ -492,6 +501,7 @@ export async function recordSupplierPayment(
       const duplicate = looksLikeDuplicatePayment(
         {
           amount,
+          currency,
           paidAt: input.paidAt,
           method: input.method ?? "cash",
           invoiceIds: validation.normalised.map((a) => a.invoiceId),
@@ -538,12 +548,17 @@ export async function recordSupplierPayment(
           [newId("salloc", `${nowIso}-${allocation.invoiceId}-${allocation.amount}`), id, allocation.invoiceId, allocation.amount, nowIso],
           false
         );
+        await db.run(
+          `UPDATE custom_invoices SET supplier_id = ? WHERE id = ? AND (supplier_id IS NULL OR supplier_id = '')`,
+          [input.supplierId, allocation.invoiceId],
+          false
+        );
       }
 
       await db.run(
         `INSERT INTO financial_transactions
-           (id, kind, amount, currency, occurred_at, account_id, source_type, source_id, reference_note, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+           (id, kind, amount, currency, occurred_at, account_id, source_type, source_id, reference_note, notes, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         [
           `tx-${id}`,
           "payment",
@@ -554,6 +569,7 @@ export async function recordSupplierPayment(
           "supplier_payment",
           id,
           allocated.reference,
+          input.notes ?? null,
           nowIso,
         ],
         false
