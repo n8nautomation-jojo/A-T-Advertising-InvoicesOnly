@@ -185,9 +185,9 @@ export function CustomersDirectoryTable({
                     className="hover:bg-muted/20 transition-colors cursor-pointer group"
                     onClick={() => onOpenProfile(c)}
                   >
-                    <td className="py-3 pr-3.5 font-bold text-foreground">
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-sm text-foreground group-hover:text-primary transition-colors">
+                    <td className="py-3 pr-3.5 font-bold text-foreground min-w-[160px] max-w-[260px]">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-black text-sm text-foreground group-hover:text-primary transition-colors leading-snug break-words">
                           {c.name}
                         </span>
                         {hasOverdue && (
@@ -207,69 +207,75 @@ export function CustomersDirectoryTable({
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-3" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       {c.phone ? (
                         <a
                           href={`tel:${c.phone}`}
                           className="inline-flex items-center gap-1.5 font-mono text-xs font-bold text-primary hover:underline"
-                          dir="ltr"
                         >
-                          <PhoneCall className="h-3 w-3 text-primary/70" />
-                          <span>{c.phone}</span>
+                          <PhoneCall className="h-3 w-3 text-primary/70 shrink-0" />
+                          <bdi dir="ltr">{c.phone}</bdi>
                         </a>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-3 whitespace-nowrap">
                       <span
                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black border ${cfg.bg} ${cfg.color}`}
                       >
                         {cfg.label}
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-muted-foreground text-xs">
+                    <td className="py-3 px-3 text-muted-foreground text-xs break-words max-w-[180px]">
                       {c.address || "—"}
                     </td>
                     <td className="py-3 px-3 font-mono font-black text-foreground tabular-nums">
                       <div className="flex flex-col gap-1 items-start">
-                        {buckets.map((b) => (
-                          <div
-                            key={b.currency}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-secondary/35 px-2 py-0.5 leading-tight whitespace-nowrap"
-                          >
-                            <span className="text-[9.5px] font-black text-primary/90">
-                              {b.currency}
-                            </span>
-                            <span>
-                              {formatNumber(b.invoiced)}{" "}
-                              <span className="text-[10px] text-muted-foreground font-normal">
-                                {getCurrencyShortLabel(b.currency)}
+                        {buckets.map((b) => {
+                          const cleanInv = Math.abs(Number(b.invoiced) || 0) < 0.005 ? 0 : Number(b.invoiced) || 0;
+                          return (
+                            <div
+                              key={b.currency}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-secondary/35 px-2 py-0.5 leading-tight whitespace-nowrap"
+                            >
+                              <bdi dir="ltr" className="text-[9.5px] font-black text-primary/90">
+                                {b.currency}
+                              </bdi>
+                              <span>
+                                <bdi dir="ltr">{formatNumber(cleanInv)}</bdi>{" "}
+                                <span className="font-sans text-[10px] text-muted-foreground font-normal">
+                                  {getCurrencyShortLabel(b.currency)}
+                                </span>
                               </span>
-                            </span>
-                          </div>
-                        ))}
+                            </div>
+                          );
+                        })}
                       </div>
                     </td>
                     <td className="py-3 px-3 font-mono font-black tabular-nums">
                       {outstandingBuckets.length > 0 ? (
                         <div className="flex flex-col gap-1 items-start">
-                          {outstandingBuckets.map((b) => (
-                            <div
-                              key={b.currency}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-2 py-0.5 text-rose-600 dark:text-rose-400 font-black leading-tight whitespace-nowrap"
-                            >
-                              <span className="text-[9.5px] font-black opacity-80">
-                                {b.currency}
-                              </span>
-                              <span>
-                                {formatNumber(b.outstanding)} {getCurrencyShortLabel(b.currency)} عليه
-                              </span>
-                            </div>
-                          ))}
+                          {outstandingBuckets.map((b) => {
+                            const cleanOut = Math.abs(Number(b.outstanding) || 0) < 0.005 ? 0 : Number(b.outstanding) || 0;
+                            return (
+                              <div
+                                key={b.currency}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-2 py-0.5 text-rose-600 dark:text-rose-400 font-black leading-tight whitespace-nowrap"
+                              >
+                                <bdi dir="ltr" className="text-[9.5px] font-black opacity-80">
+                                  {b.currency}
+                                </bdi>
+                                <span>
+                                  <bdi dir="ltr">{formatNumber(cleanOut)}</bdi>{" "}
+                                  <span className="font-sans">{getCurrencyShortLabel(b.currency)} عليه</span>
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
-                        <span className="text-emerald-600 font-bold text-xs">
+                        <span className="text-emerald-600 font-sans font-bold text-xs">
                           متزن (0)
                         </span>
                       )}
@@ -365,18 +371,19 @@ export function CustomersMobileCards({
               onClick={() => onOpenProfile(c)}
               className="rounded-2xl border border-border/70 bg-card p-3.5 space-y-3 shadow-2xs cursor-pointer active:scale-[0.99] transition-all"
             >
-              <div className="flex items-start justify-between gap-2 border-b border-border/50 pb-2.5">
-                <div>
-                  <p className="font-black text-foreground text-sm tracking-tight">{c.name}</p>
+              <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border/50 pb-2.5 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <p className="font-black text-foreground text-sm tracking-tight leading-snug break-words">
+                    {c.name}
+                  </p>
                   {c.phone && (
                     <a
                       href={`tel:${c.phone}`}
                       onClick={(e) => e.stopPropagation()}
                       className="inline-flex items-center gap-1.5 text-xs text-primary font-mono font-bold mt-1"
-                      dir="ltr"
                     >
-                      <PhoneCall className="h-3 w-3" />
-                      <span>{c.phone}</span>
+                      <PhoneCall className="h-3 w-3 shrink-0" />
+                      <bdi dir="ltr">{c.phone}</bdi>
                     </a>
                   )}
                 </div>
@@ -387,41 +394,43 @@ export function CustomersMobileCards({
                 </span>
               </div>
 
-              <div className="space-y-2 text-xs">
+              <div className="space-y-2 text-xs min-w-0">
                 {buckets.map((b) => {
                   const conf = SUPPORTED_CURRENCIES[b.currency];
                   const curLabel = getCurrencyShortLabel(b.currency);
-                  const hasDebt = b.outstanding > 0.009;
+                  const cleanInv = Math.abs(Number(b.invoiced) || 0) < 0.005 ? 0 : Number(b.invoiced) || 0;
+                  const cleanOut = Math.abs(Number(b.outstanding) || 0) < 0.005 ? 0 : Number(b.outstanding) || 0;
+                  const hasDebt = cleanOut > 0.009;
                   return (
                     <div
                       key={b.currency}
-                      className="rounded-xl border border-border/70 bg-secondary/25 p-2.5 space-y-1.5"
+                      className="rounded-xl border border-border/70 bg-secondary/25 p-2.5 space-y-1.5 min-w-0"
                     >
-                      <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-1">
                         <span className="inline-flex items-center gap-1 text-[10.5px] font-black text-foreground">
                           <span aria-hidden="true">{conf?.flag}</span>
                           <span>{conf?.nameAr || b.currency}</span>
                         </span>
                         <span className="rounded-md bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[9.5px] font-mono font-black text-primary">
-                          {b.currency} ({curLabel})
+                          <bdi dir="ltr">{b.currency}</bdi> ({curLabel})
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="rounded-lg border border-border/50 bg-card/80 px-2 py-1.5">
+                      <div className="grid grid-cols-2 gap-2 min-w-0">
+                        <div className="rounded-lg border border-border/50 bg-card/80 px-2 py-1.5 min-w-0">
                           <span className="text-[9.5px] text-muted-foreground font-bold block">
                             إجمالي الفواتير
                           </span>
-                          <p className="font-mono font-bold text-foreground tabular-nums mt-0.5 leading-tight">
-                            {formatNumber(b.invoiced)}{" "}
-                            <span className="text-[10px] text-muted-foreground font-normal">
+                          <p className="font-mono font-bold text-foreground tabular-nums mt-0.5 leading-tight break-words">
+                            <bdi dir="ltr">{formatNumber(cleanInv)}</bdi>{" "}
+                            <span className="font-sans text-[10px] text-muted-foreground font-normal">
                               {curLabel}
                             </span>
                           </p>
                         </div>
 
                         <div
-                          className={`rounded-lg border px-2 py-1.5 ${
+                          className={`rounded-lg border px-2 py-1.5 min-w-0 ${
                             hasDebt
                               ? "border-rose-500/25 bg-rose-500/[0.05]"
                               : "border-emerald-500/20 bg-emerald-500/[0.04]"
@@ -430,13 +439,14 @@ export function CustomersMobileCards({
                           <span className="text-[9.5px] text-muted-foreground font-bold block">
                             المستحق المطلوب
                           </span>
-                          <p className="font-mono font-black tabular-nums mt-0.5 leading-tight">
+                          <p className="font-mono font-black tabular-nums mt-0.5 leading-tight break-words">
                             {hasDebt ? (
                               <span className="text-rose-600 dark:text-rose-400">
-                                {formatNumber(b.outstanding)} {curLabel} عليه
+                                <bdi dir="ltr">{formatNumber(cleanOut)}</bdi>{" "}
+                                <span className="font-sans">{curLabel} عليه</span>
                               </span>
                             ) : (
-                              <span className="text-emerald-600">متزن (0)</span>
+                              <span className="text-emerald-600 font-sans">متزن (0)</span>
                             )}
                           </p>
                         </div>
@@ -447,7 +457,7 @@ export function CustomersMobileCards({
               </div>
 
               <div
-                className="pt-2.5 border-t border-border/50 flex items-center justify-between gap-2"
+                className="pt-2.5 border-t border-border/50 flex flex-wrap items-center justify-between gap-2"
                 onClick={(e) => e.stopPropagation()}
               >
                 <Button

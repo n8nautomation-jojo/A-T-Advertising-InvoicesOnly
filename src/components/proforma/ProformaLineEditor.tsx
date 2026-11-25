@@ -57,10 +57,13 @@ export function ProformaLineEditor({ lines, onChange, currency = "SDG" }: Props)
 
   const duplicateLine = (line: ProformaLine) => {
     playAddSound();
+    const baseDesc = String(line.description ?? "")
+      .replace(/(?:\s*\(نسخة\))+$/g, "")
+      .trim();
     const newLine: ProformaLine = {
       ...line,
       id: `pline-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      description: `${line.description} (نسخة)`,
+      description: baseDesc ? `${baseDesc} (نسخة)` : "(نسخة)",
     };
     onChange([...lines, newLine]);
   };

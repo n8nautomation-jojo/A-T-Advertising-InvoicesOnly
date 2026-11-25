@@ -184,12 +184,18 @@ export function BillingArchiveTable({
       return;
     }
     const inv = rec.raw as CustomInvoice;
+    // BUG-009: Preserve original customer/party name untouched on duplication and never stack "(نسخة)"
+    const cleanPartyName =
+      String(inv.meta.partyName ?? "")
+        .replace(/(?:\s*\(نسخة\))+$/g, "")
+        .trim() || inv.meta.partyName;
+
     const duplicated: CustomInvoice = {
       ...inv,
       id: `custom-inv-${Date.now()}`,
       reference: undefined,
       referenceAssignedAt: undefined,
-      meta: { ...inv.meta, partyName: `${inv.meta.partyName} (نسخة)`, date: getLocalIsoDate() },
+      meta: { ...inv.meta, partyName: cleanPartyName, date: getLocalIsoDate() },
       items: (inv.items || []).map((item, index) => ({
         ...item,
         id: `dup-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
@@ -280,16 +286,16 @@ export function BillingArchiveTable({
         className="overflow-x-auto overscroll-x-contain w-full max-w-full"
         data-testid="billing-archive-scroll-box"
       >
-        <table className="w-full text-right text-xs min-w-[680px]">
+        <table className="w-full text-right text-xs table-auto">
           <thead>
-            <tr className="bg-muted/40 text-muted-foreground font-black border-b border-border/50 h-11">
-              <th className="py-2 px-4 text-center w-16">الرقم</th>
-              <th className="py-2 px-4">نوع الفاتورة</th>
-              <th className="py-2 px-4">العميل / الجهة</th>
-              <th className="py-2 px-4 text-center">التاريخ</th>
-              <th className="py-2 px-4">البنود</th>
-              <th className="py-2 px-4 text-left">إجمالي القيمة</th>
-              <th className="py-2 px-4 text-center w-40">الإجراءات</th>
+            <tr className="bg-muted/40 text-muted-foreground font-black border-b border-border/50 h-10 sm:h-11">
+              <th className="py-2 px-2 sm:px-3.5 text-center whitespace-nowrap">الرقم</th>
+              <th className="py-2 px-2 sm:px-3.5 whitespace-nowrap">نوع الفاتورة</th>
+              <th className="py-2 px-2 sm:px-3.5 min-w-[140px] sm:min-w-[175px]">العميل / الجهة</th>
+              <th className="hidden md:table-cell py-2 px-3 text-center whitespace-nowrap">التاريخ</th>
+              <th className="hidden lg:table-cell py-2 px-3 whitespace-nowrap">البنود</th>
+              <th className="py-2 px-2 sm:px-3.5 text-left whitespace-nowrap">إجمالي القيمة</th>
+              <th className="py-2 px-2 sm:px-3.5 text-center whitespace-nowrap">الإجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/40">
@@ -315,23 +321,31 @@ export function BillingArchiveTable({
                 return (
                   <tr
                     key={`${rec.kind}-${rec.id}`}
-                    className="hover:bg-muted/30 transition-colors h-14 group text-foreground font-bold"
+                    className="hover:bg-muted/30 transition-colors group text-foreground font-bold align-middle"
                   >
-                    <td className="py-2 px-4 text-center font-mono font-black text-primary whitespace-nowrap" dir="ltr">
-                      {/^(INV|PINV|RCV|PAY|EXP)-/.test(rec.serial) ? rec.serial : `#${rec.serial}`}
-                    </td>
-
-                    <td className="py-2 px-4">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-black border ${rec.badgeColor}`}>
-                        {isProforma && <FileText className="h-3 w-3" />}
-                        {isCustom && rec.type === "sales" && <TrendingUp className="h-3 w-3" />}
-                        {isCustom && rec.type === "purchase" && <ShoppingBag className="h-3 w-3" />}
-                        {isCalc && <Calculator className="h-3 w-3" />}
-                        <span>{rec.typeLabel}</span>
+                    <td className="py-2.5 px-2 sm:px-3.5 text-center whitespace-nowrap">
+                      <bdi dir="ltr" className="font-mono font-black text-primary text-[11px] sm:text-xs">
+                        {/^(INV|PINV|RCV|PAY|EXP)-/.test(rec.serial) ? rec.serial : `#${rec.serial}`}
+                      </bdi>
+                      <span className="md:hidden block mt-0.5 text-[10px] font-mono text-muted-foreground">
+                        <bdi dir="ltr">{rec.date}</bdi>
                       </span>
                     </td>
 
-                    <td className="py-2 px-4 font-black text-sm text-foreground">
+                    <td className="py-2.5 px-2 sm:px-3.5 whitespace-nowrap">
+                      <span className={`inline-flex items-center gap-1 px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-[10.5px] font-black border ${rec.badgeColor}`}>
+                        {isProforma && <FileText className="h-3 w-3 shrink-0" />}
+                        {isCustom && rec.type === "sales" && <TrendingUp className="h-3 w-3 shrink-0" />}
+                        {isCustom && rec.type === "purchase" && <ShoppingBag className="h-3 w-3 shrink-0" />}
+                        {isCalc && <Calculator className="h-3 w-3 shrink-0" />}
+                        <span>{rec.typeLabel}</span>
+                      </span>
+                      <span className="lg:hidden block mt-0.5 text-[10px] font-medium text-muted-foreground">
+                        {rec.itemsCount > 0 ? `${rec.itemsCount} بند` : "تفاصيل عامة"}
+                      </span>
+                    </td>
+
+                    <td className="py-2.5 px-2 sm:px-3.5 font-black text-xs sm:text-sm text-foreground min-w-[140px] sm:min-w-[175px] max-w-[260px]">
                       {isCustom && rec.type !== "purchase" ? (
                         (() => {
                           const linkedCustomer = rec.raw.customerId
@@ -346,37 +360,39 @@ export function BillingArchiveTable({
                               <button
                                 type="button"
                                 onClick={() => handleOpenCustomerProfile(linkedCustomer.id)}
-                                className="inline-flex items-center gap-1.5 text-right text-foreground hover:text-primary transition-colors cursor-pointer group/cust"
+                                className="inline-flex items-start gap-1.5 text-right text-foreground hover:text-primary transition-colors cursor-pointer group/cust leading-snug break-words"
                                 title="فتح ملف العميل وكشف الحساب"
                               >
-                                <UserCheck className="h-3.5 w-3.5 text-primary shrink-0" />
-                                <span className="group-hover/cust:underline">{rec.customerName}</span>
+                                <UserCheck className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                                <span className="group-hover/cust:underline break-words">{rec.customerName}</span>
                               </button>
                             );
                           }
 
                           return (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span>{rec.customerName}</span>
-                              {!matchedByName && (
-                                <span className="rounded-full border border-border/70 bg-secondary/60 px-2 py-0.2 text-[9.5px] font-bold text-muted-foreground">
-                                  عابر
-                                </span>
-                              )}
-                              <button
-                                type="button"
-                                disabled={linkingInvoiceId === rec.id}
-                                onClick={() => void handleSaveWalkInAsCustomer(rec.raw)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-black text-primary hover:bg-primary hover:text-white transition-colors cursor-pointer disabled:opacity-50"
-                                title={
-                                  matchedByName
-                                    ? `ربط هذه الفاتورة بملف ${matchedByName.name}`
-                                    : "حفظ في دليل العملاء وربط الفاتورة"
-                                }
-                              >
-                                <UserPlus className="h-3 w-3" />
-                                <span>{matchedByName ? "ربط بملفه" : "حفظ كعميل"}</span>
-                              </button>
+                            <div className="space-y-1 min-w-0">
+                              <span className="block leading-snug break-words">{rec.customerName}</span>
+                              <div className="flex flex-wrap items-center gap-1">
+                                {!matchedByName && (
+                                  <span className="rounded-full border border-border/70 bg-secondary/60 px-1.5 py-0.2 text-[9.5px] font-bold text-muted-foreground whitespace-nowrap">
+                                    عابر
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={linkingInvoiceId === rec.id}
+                                  onClick={() => void handleSaveWalkInAsCustomer(rec.raw)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[10px] font-black text-primary hover:bg-primary hover:text-white transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                                  title={
+                                    matchedByName
+                                      ? `ربط هذه الفاتورة بملف ${matchedByName.name}`
+                                      : "حفظ في دليل العملاء وربط الفاتورة"
+                                  }
+                                >
+                                  <UserPlus className="h-3 w-3 shrink-0" />
+                                  <span>{matchedByName ? "ربط بملفه" : "حفظ كعميل"}</span>
+                                </button>
+                              </div>
                             </div>
                           );
                         })()
@@ -387,32 +403,32 @@ export function BillingArchiveTable({
                             <button
                               type="button"
                               onClick={() => handleOpenCustomerProfile(matched.id)}
-                              className="inline-flex items-center gap-1.5 text-right text-foreground hover:text-primary hover:underline transition-colors cursor-pointer"
+                              className="inline-flex items-start gap-1.5 text-right text-foreground hover:text-primary hover:underline transition-colors cursor-pointer leading-snug break-words"
                               title="فتح ملف العميل"
                             >
-                              <UserCheck className="h-3.5 w-3.5 text-primary shrink-0" />
-                              <span>{rec.customerName}</span>
+                              <UserCheck className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                              <span className="break-words">{rec.customerName}</span>
                             </button>
                           ) : (
-                            rec.customerName
+                            <span className="block leading-snug break-words">{rec.customerName}</span>
                           );
                         })()
                       ) : (
-                        rec.customerName
+                        <span className="block leading-snug break-words">{rec.customerName}</span>
                       )}
                     </td>
 
-                    <td className="py-2 px-4 text-center font-mono text-muted-foreground">
-                      {rec.date}
+                    <td className="hidden md:table-cell py-2.5 px-3 text-center font-mono text-muted-foreground whitespace-nowrap">
+                      <bdi dir="ltr">{rec.date}</bdi>
                     </td>
 
-                    <td className="py-2 px-4 max-w-xs truncate text-muted-foreground">
+                    <td className="hidden lg:table-cell py-2.5 px-3 max-w-[160px] truncate text-muted-foreground">
                       {rec.itemsCount > 0 ? `${rec.itemsCount} بند مسجل` : "تفاصيل عامة"}
                     </td>
 
-                    <td className="py-2 px-4 text-left font-mono text-sm">
+                    <td className="py-2.5 px-2 sm:px-3.5 text-left font-mono text-xs sm:text-sm whitespace-nowrap">
                       <span className="font-black text-foreground">
-                        {formatAccountingNumber(rec.total)}{" "}
+                        <bdi dir="ltr" className="tabular-nums">{formatAccountingNumber(rec.total)}</bdi>{" "}
                         <span className="text-[10px] font-mono font-bold text-muted-foreground uppercase">{rec.currency || "SDG"}</span>
                       </span>
                       {isCustom && (rec.type === "sales" || rec.type === "purchase") && (
@@ -425,14 +441,22 @@ export function BillingArchiveTable({
                               : "text-emerald-600 dark:text-emerald-400"
                           }`}
                         >
-                          {settlement.outstanding > 0
-                            ? `متبقي ${formatAccountingNumber(settlement.outstanding)} ${getCurrencyShortLabel(rec.currency)}`
-                            : "مسدَّدة"}
+                          {settlement.outstanding > 0 ? (
+                            <>
+                              <span>متبقي </span>
+                              <bdi dir="ltr" className="font-mono tabular-nums">
+                                {formatAccountingNumber(settlement.outstanding)}
+                              </bdi>{" "}
+                              <span>{getCurrencyShortLabel(rec.currency)}</span>
+                            </>
+                          ) : (
+                            "مسدَّدة"
+                          )}
                         </span>
                       )}
                     </td>
 
-                    <td className="py-2 px-4 text-center">
+                    <td className="py-2.5 px-1.5 sm:px-3 text-center">
                       <BillingArchiveRowActions
                         rec={rec}
                         outstanding={settlement.outstanding}

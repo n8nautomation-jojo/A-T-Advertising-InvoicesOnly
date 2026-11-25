@@ -234,7 +234,7 @@ export function CustomerDetailStatementTab({
             </div>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex flex-wrap items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() => applyPreset("month")}
@@ -265,7 +265,7 @@ export function CustomerDetailStatementTab({
       )}
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-card p-3 rounded-2xl border border-border/70 shadow-2xs">
-        <div className="relative flex-1">
+        <div className="relative flex-1 min-w-0">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <Input
             type="text"
@@ -286,7 +286,7 @@ export function CustomerDetailStatementTab({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0 justify-between sm:justify-end flex-wrap">
-          <div className="flex items-center gap-1 bg-secondary/60 p-0.5 rounded-xl border border-border/60">
+          <div className="flex flex-wrap items-center gap-1 bg-secondary/60 p-0.5 rounded-xl border border-border/60">
             {[
               { key: "all" as const, label: "الكل" },
               { key: "invoice" as const, label: "فواتير" },
@@ -300,7 +300,7 @@ export function CustomerDetailStatementTab({
                   playTapSound();
                   setStatementTypeFilter(item.key);
                 }}
-                className={`px-3 py-1.5 text-xs rounded-lg font-bold transition-all cursor-pointer ${
+                className={`px-2.5 sm:px-3 py-1.5 text-xs rounded-lg font-bold transition-all cursor-pointer ${
                   statementTypeFilter === item.key
                     ? "bg-card text-foreground shadow-2xs"
                     : "text-muted-foreground hover:text-foreground"
@@ -334,85 +334,108 @@ export function CustomerDetailStatementTab({
             const conf = SUPPORTED_CURRENCIES[code];
             const curLabel = getCurrencyShortLabel(code);
             const filteredLines = filterLinesForStatement(stmt.lines);
-            const netBal = stmt.netBalance ?? stmt.outstanding ?? 0;
+            const rawNetBal = stmt.netBalance ?? stmt.outstanding ?? 0;
+            const netBal = Math.abs(rawNetBal) < 0.005 ? 0 : rawNetBal;
 
             return (
               <div
                 key={code}
-                className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs"
+                className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs w-full max-w-full"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-primary/[0.06] border-b border-border/60 px-3.5 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm leading-none" aria-hidden="true">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm leading-none shrink-0" aria-hidden="true">
                       {conf.flag}
                     </span>
-                    <span className="text-xs font-black text-foreground">
-                      كشف حركات {conf.nameAr} ({code})
+                    <span className="text-xs font-black text-foreground break-words">
+                      كشف حركات {conf.nameAr} (<bdi dir="ltr">{code}</bdi>)
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] font-mono">
+                  <div className="flex items-center gap-1.5 text-[11px] font-mono">
                     <span className="text-muted-foreground font-sans">صافي المطلوب:</span>
                     <strong
                       className={
                         netBal > 0.009
-                          ? "text-rose-600 dark:text-rose-400 font-black"
-                          : "text-emerald-600 dark:text-emerald-400 font-black"
+                          ? "text-rose-600 dark:text-rose-400 font-black tabular-nums"
+                          : "text-emerald-600 dark:text-emerald-400 font-black tabular-nums"
                       }
                     >
-                      {formatNumber(Math.abs(netBal))} {curLabel}
-                      {netBal > 0.009 ? " عليه" : netBal < -0.009 ? " له" : ""}
+                      <bdi dir="ltr">{formatNumber(Math.abs(netBal))}</bdi>{" "}
+                      <span className="font-sans">{curLabel}</span>
+                      <span className="font-sans">{netBal > 0.009 ? " عليه" : netBal < -0.009 ? " له" : ""}</span>
                     </strong>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto overscroll-x-contain">
-                  <table className="w-full text-right text-xs">
+                <div className="overflow-x-auto overscroll-x-contain w-full max-w-full">
+                  <table className="w-full text-right text-xs table-auto">
                     <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs text-muted-foreground text-[11px] border-b border-border/70 z-10 shadow-xs">
                       <tr>
-                        <th className="py-2.5 px-3 font-black">التاريخ</th>
-                        <th className="py-2.5 px-3 font-black">البيان والحركة</th>
-                        <th className="py-2.5 px-3 font-black text-center">المرجع</th>
-                        <th className="py-2.5 px-3 font-black text-left" dir="ltr">مدين (+) [{code}]</th>
-                        <th className="py-2.5 px-3 font-black text-left" dir="ltr">دائن (-) [{code}]</th>
-                        <th className="py-2.5 px-3 font-black text-left" dir="ltr">الرصيد [{code}]</th>
+                        <th className="hidden md:table-cell py-2.5 px-3 font-black whitespace-nowrap">التاريخ</th>
+                        <th className="py-2.5 px-2 sm:px-3 font-black min-w-[130px] sm:min-w-[170px]">البيان والحركة</th>
+                        <th className="hidden lg:table-cell py-2.5 px-3 font-black text-center whitespace-nowrap">المرجع</th>
+                        <th className="py-2.5 px-2 sm:px-3 font-black text-left whitespace-nowrap">
+                          مدين (+) [<bdi dir="ltr">{code}</bdi>]
+                        </th>
+                        <th className="py-2.5 px-2 sm:px-3 font-black text-left whitespace-nowrap">
+                          دائن (-) [<bdi dir="ltr">{code}</bdi>]
+                        </th>
+                        <th className="py-2.5 px-2 sm:px-3 font-black text-left whitespace-nowrap">
+                          الرصيد [<bdi dir="ltr">{code}</bdi>]
+                        </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border/40 font-mono text-[11px]">
+                    <tbody className="divide-y divide-border/40 text-[11px]">
                       {filteredLines.length > 0 ? (
-                        filteredLines.map((line, idx) => (
-                          <tr key={line.id || idx} className="hover:bg-muted/20 transition-colors">
-                            <td className="py-2.5 px-3 text-muted-foreground font-sans">{line.date}</td>
-                            <td className="py-2.5 px-3 font-sans font-bold text-foreground">
-                              {line.label}
-                              {line.notes && (
-                                <span className="block text-[10px] text-muted-foreground font-normal">
-                                  {line.notes}
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 text-center text-primary font-bold" dir="ltr">
-                              {line.reference || "—"}
-                            </td>
-                            <td className="py-2.5 px-3 text-left text-rose-600 font-bold tabular-nums text-xs" dir="ltr">
-                              {line.debit > 0 ? formatNumber(line.debit) : "—"}
-                            </td>
-                            <td className="py-2.5 px-3 text-left text-emerald-600 font-bold tabular-nums text-xs" dir="ltr">
-                              {line.credit > 0 ? formatNumber(line.credit) : "—"}
-                            </td>
-                            <td
-                              className={`py-2.5 px-3 text-left font-black tabular-nums text-xs ${
-                                line.runningBalance > 0
-                                  ? "text-rose-600"
-                                  : line.runningBalance < 0
-                                  ? "text-emerald-600"
-                                  : "text-foreground"
-                              }`}
-                              dir="ltr"
-                            >
-                              {formatNumber(line.runningBalance)} {curLabel}
-                            </td>
-                          </tr>
-                        ))
+                        filteredLines.map((line, idx) => {
+                          const cleanRunning = Math.abs(Number(line.runningBalance) || 0) < 0.005 ? 0 : Number(line.runningBalance) || 0;
+                          return (
+                            <tr key={line.id || idx} className="hover:bg-muted/20 transition-colors align-middle">
+                              <td className="hidden md:table-cell py-2.5 px-3 text-muted-foreground font-mono whitespace-nowrap">
+                                <bdi dir="ltr">{line.date}</bdi>
+                              </td>
+                              <td className="py-2.5 px-2 sm:px-3 font-sans font-bold text-foreground min-w-[130px] sm:min-w-[170px] max-w-[260px] break-words">
+                                <span>{line.label}</span>
+                                {line.notes && (
+                                  <span className="block text-[10px] text-muted-foreground font-normal break-words">
+                                    {line.notes}
+                                  </span>
+                                )}
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] font-mono text-muted-foreground">
+                                  <span className="md:hidden">
+                                    <bdi dir="ltr">{line.date}</bdi>
+                                  </span>
+                                  {line.reference && (
+                                    <span className="lg:hidden text-primary font-bold">
+                                      <bdi dir="ltr">{line.reference}</bdi>
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="hidden lg:table-cell py-2.5 px-3 text-center text-primary font-mono font-bold whitespace-nowrap">
+                                <bdi dir="ltr">{line.reference || "—"}</bdi>
+                              </td>
+                              <td className="py-2.5 px-2 sm:px-3 text-left font-mono text-rose-600 font-bold tabular-nums text-xs whitespace-nowrap">
+                                <bdi dir="ltr">{line.debit > 0.005 ? formatNumber(line.debit) : "—"}</bdi>
+                              </td>
+                              <td className="py-2.5 px-2 sm:px-3 text-left font-mono text-emerald-600 font-bold tabular-nums text-xs whitespace-nowrap">
+                                <bdi dir="ltr">{line.credit > 0.005 ? formatNumber(line.credit) : "—"}</bdi>
+                              </td>
+                              <td
+                                className={`py-2.5 px-2 sm:px-3 text-left font-mono font-black tabular-nums text-xs whitespace-nowrap ${
+                                  cleanRunning > 0
+                                    ? "text-rose-600"
+                                    : cleanRunning < 0
+                                    ? "text-emerald-600"
+                                    : "text-foreground"
+                                }`}
+                              >
+                                <bdi dir="ltr">{formatNumber(cleanRunning)}</bdi>{" "}
+                                <span className="font-sans text-[10px]">{curLabel}</span>
+                              </td>
+                            </tr>
+                          );
+                        })
                       ) : (
                         <tr>
                           <td colSpan={6} className="py-10 text-center text-muted-foreground font-sans font-bold">
@@ -423,17 +446,20 @@ export function CustomerDetailStatementTab({
                     </tbody>
                     <tfoot>
                       <tr className="bg-secondary/40 border-t border-border/70 font-mono text-[11px] font-black">
-                        <td colSpan={3} className="py-2.5 px-3 font-sans text-foreground">
-                          إجمالي حركات {conf.nameAr} ({code})
+                        <td className="hidden md:table-cell py-2.5 px-3" />
+                        <td className="py-2.5 px-2 sm:px-3 font-sans text-foreground">
+                          إجمالي حركات {conf.nameAr} (<bdi dir="ltr">{code}</bdi>)
                         </td>
-                        <td className="py-2.5 px-3 text-left text-rose-600 tabular-nums" dir="ltr">
-                          {formatNumber(stmt.totalInvoiced || 0)}
+                        <td className="hidden lg:table-cell py-2.5 px-3" />
+                        <td className="py-2.5 px-2 sm:px-3 text-left text-rose-600 tabular-nums whitespace-nowrap">
+                          <bdi dir="ltr">{formatNumber(Math.abs(stmt.totalInvoiced || 0) < 0.005 ? 0 : stmt.totalInvoiced || 0)}</bdi>
                         </td>
-                        <td className="py-2.5 px-3 text-left text-emerald-600 tabular-nums" dir="ltr">
-                          {formatNumber(stmt.totalCollected || 0)}
+                        <td className="py-2.5 px-2 sm:px-3 text-left text-emerald-600 tabular-nums whitespace-nowrap">
+                          <bdi dir="ltr">{formatNumber(Math.abs(stmt.totalCollected || 0) < 0.005 ? 0 : stmt.totalCollected || 0)}</bdi>
                         </td>
-                        <td className="py-2.5 px-3 text-left text-foreground tabular-nums" dir="ltr">
-                          {formatNumber(netBal)} {curLabel}
+                        <td className="py-2.5 px-2 sm:px-3 text-left text-foreground tabular-nums whitespace-nowrap">
+                          <bdi dir="ltr">{formatNumber(netBal)}</bdi>{" "}
+                          <span className="font-sans text-[10px]">{curLabel}</span>
                         </td>
                       </tr>
                     </tfoot>
@@ -444,55 +470,75 @@ export function CustomerDetailStatementTab({
           })}
         </div>
       ) : (
-        <div className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs">
-          <div className="overflow-x-auto overscroll-x-contain">
-            <table className="w-full text-right text-xs">
+        <div className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs w-full max-w-full">
+          <div className="overflow-x-auto overscroll-x-contain w-full max-w-full">
+            <table className="w-full text-right text-xs table-auto">
               <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs text-muted-foreground text-[11px] border-b border-border/70 z-10 shadow-xs">
                 <tr>
-                  <th className="py-3 px-3.5 font-black">التاريخ</th>
-                  <th className="py-3 px-3.5 font-black">البيان والحركة</th>
-                  <th className="py-3 px-3.5 font-black text-center">المرجع</th>
-                  <th className="py-3 px-3.5 font-black text-left" dir="ltr">مدين (+) [{selectedCurrency}]</th>
-                  <th className="py-3 px-3.5 font-black text-left" dir="ltr">دائن (-) [{selectedCurrency}]</th>
-                  <th className="py-3 px-3.5 font-black text-left" dir="ltr">الرصيد الجاري [{selectedCurrency}]</th>
+                  <th className="hidden md:table-cell py-2.5 px-3 font-black whitespace-nowrap">التاريخ</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black min-w-[130px] sm:min-w-[170px]">البيان والحركة</th>
+                  <th className="hidden lg:table-cell py-2.5 px-3 font-black text-center whitespace-nowrap">المرجع</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-left whitespace-nowrap">
+                    مدين (+) [<bdi dir="ltr">{selectedCurrency}</bdi>]
+                  </th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-left whitespace-nowrap">
+                    دائن (-) [<bdi dir="ltr">{selectedCurrency}</bdi>]
+                  </th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-left whitespace-nowrap">
+                    الرصيد الجاري [<bdi dir="ltr">{selectedCurrency}</bdi>]
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/40 font-mono text-[11px]">
+              <tbody className="divide-y divide-border/40 text-[11px]">
                 {paginatedStatementLines.length > 0 ? (
-                  paginatedStatementLines.map((line, idx) => (
-                    <tr key={line.id || idx} className="hover:bg-muted/20 transition-colors">
-                      <td className="py-3 px-3.5 text-muted-foreground font-sans">{line.date}</td>
-                      <td className="py-3 px-3.5 font-sans font-bold text-foreground">
-                        {line.label}
-                        {line.notes && (
-                          <span className="block text-[10px] text-muted-foreground font-normal">
-                            {line.notes}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3.5 text-center text-primary font-bold" dir="ltr">
-                        {line.reference || "—"}
-                      </td>
-                      <td className="py-3 px-3.5 text-left text-rose-600 font-bold tabular-nums text-xs" dir="ltr">
-                        {line.debit > 0 ? formatNumber(line.debit) : "—"}
-                      </td>
-                      <td className="py-3 px-3.5 text-left text-emerald-600 font-bold tabular-nums text-xs" dir="ltr">
-                        {line.credit > 0 ? formatNumber(line.credit) : "—"}
-                      </td>
-                      <td
-                        className={`py-3 px-3.5 text-left font-black tabular-nums text-xs ${
-                          line.runningBalance > 0
-                            ? "text-rose-600"
-                            : line.runningBalance < 0
-                            ? "text-emerald-600"
-                            : "text-foreground"
-                        }`}
-                        dir="ltr"
-                      >
-                        {formatNumber(line.runningBalance)}
-                      </td>
-                    </tr>
-                  ))
+                  paginatedStatementLines.map((line, idx) => {
+                    const cleanRunning = Math.abs(Number(line.runningBalance) || 0) < 0.005 ? 0 : Number(line.runningBalance) || 0;
+                    return (
+                      <tr key={line.id || idx} className="hover:bg-muted/20 transition-colors align-middle">
+                        <td className="hidden md:table-cell py-2.5 px-3 text-muted-foreground font-mono whitespace-nowrap">
+                          <bdi dir="ltr">{line.date}</bdi>
+                        </td>
+                        <td className="py-2.5 px-2 sm:px-3.5 font-sans font-bold text-foreground min-w-[130px] sm:min-w-[170px] max-w-[260px] break-words">
+                          <span>{line.label}</span>
+                          {line.notes && (
+                            <span className="block text-[10px] text-muted-foreground font-normal break-words">
+                              {line.notes}
+                            </span>
+                          )}
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] font-mono text-muted-foreground">
+                            <span className="md:hidden">
+                              <bdi dir="ltr">{line.date}</bdi>
+                            </span>
+                            {line.reference && (
+                              <span className="lg:hidden text-primary font-bold">
+                                <bdi dir="ltr">{line.reference}</bdi>
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="hidden lg:table-cell py-2.5 px-3 text-center text-primary font-mono font-bold whitespace-nowrap">
+                          <bdi dir="ltr">{line.reference || "—"}</bdi>
+                        </td>
+                        <td className="py-2.5 px-2 sm:px-3.5 text-left font-mono text-rose-600 font-bold tabular-nums text-xs whitespace-nowrap">
+                          <bdi dir="ltr">{line.debit > 0.005 ? formatNumber(line.debit) : "—"}</bdi>
+                        </td>
+                        <td className="py-2.5 px-2 sm:px-3.5 text-left font-mono text-emerald-600 font-bold tabular-nums text-xs whitespace-nowrap">
+                          <bdi dir="ltr">{line.credit > 0.005 ? formatNumber(line.credit) : "—"}</bdi>
+                        </td>
+                        <td
+                          className={`py-2.5 px-2 sm:px-3.5 text-left font-mono font-black tabular-nums text-xs whitespace-nowrap ${
+                            cleanRunning > 0
+                              ? "text-rose-600"
+                              : cleanRunning < 0
+                              ? "text-emerald-600"
+                              : "text-foreground"
+                          }`}
+                        >
+                          <bdi dir="ltr">{formatNumber(cleanRunning)}</bdi>
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={6} className="py-16 text-center text-muted-foreground font-sans font-bold">
@@ -507,8 +553,8 @@ export function CustomerDetailStatementTab({
       )}
 
       {!showAllSeparated && totalStatementPages > 1 && (
-        <div className="flex items-center justify-between pt-2 border-t border-border/60 text-xs bg-card p-3 rounded-2xl border shadow-2xs">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-center sm:justify-between gap-2 pt-2 border-t border-border/60 text-xs bg-card p-3 rounded-2xl border shadow-2xs w-full min-w-0">
+          <div className="flex flex-wrap items-center justify-center gap-1">
             <Button
               type="button"
               variant="outline"

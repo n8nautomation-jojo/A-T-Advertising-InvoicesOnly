@@ -31,13 +31,22 @@ vi.mock("@/lib/database", () => ({
 
 vi.mock("@/lib/backup/notify", () => ({ notifyDataChanged: () => {} }));
 
+const navState = vi.hoisted(() => ({
+  navigateSpy: vi.fn(),
+  backSpy: vi.fn(),
+  search: {} as Record<string, any>,
+}));
+
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to, ...rest }: any) => (
     <a href={typeof to === "string" ? to : "#"} {...rest}>
       {children}
     </a>
   ),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navState.navigateSpy,
+  useLocation: () => ({ pathname: "/" }),
+  useSearch: () => navState.search,
+  useRouter: () => ({ history: { back: navState.backSpy } }),
   useRouterState: () => ({ location: { pathname: "/" } }),
 }));
 
@@ -95,6 +104,7 @@ import { ReceiptDialog } from "@/components/finance/ReceiptDialog";
 import { SupplierPaymentDialog } from "@/components/finance/SupplierPaymentDialog";
 import { ExpenseDialog } from "@/components/finance/ExpenseDialog";
 import { HomePage } from "@/components/dashboard/HomePage";
+import { BankAccountsPage } from "@/components/finance/BankAccountsPage";
 import type { AppCurrency } from "@/lib/currency/types";
 
 const NOW = "2026-11-25T09:00:00.000Z";
@@ -393,13 +403,53 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
     expect(finalProfit.netProfit).toBe(50);
   });
 
-  it("renders HomePage Bank Balance rectangle beside user greeting, keeps popup closed until clicked, and displays 4-currency Bankak cards + green/red statement rows", async () => {
+  it("navigates from HomePage Bank Balance rectangle to dedicated full-page BankAccountsPage (zero modal) and renders 4-currency cards + responsive BankStatementView with zero -0 and exact accounting figures", async () => {
+    navState.navigateSpy.mockReset();
+    navState.backSpy.mockReset();
+    navState.search = {};
+
     const sdgAcc = await ensureAccountForCurrency("SDG", NOW);
     const usdAcc = await ensureAccountForCurrency("USD", NOW);
     const sarAcc = await ensureAccountForCurrency("SAR", NOW);
     const egpAcc = await ensureAccountForCurrency("EGP", NOW);
 
-    await reconcileBankAccountBalance({ accountId: sdgAcc.id, actualBalance: 500000, occurredAt: TODAY }, NOW);
+    // Reference accounting verification from Executive Order §14:
+    // Opening: 15,000,000 SDG + Sales Collection: 5,550 SDG - Operating Expense: 150,000 SDG = 14,855,550 SDG
+    seedCustomer("cust-sdg-ref", "عميل مرجعي");
+    await reconcileBankAccountBalance({ accountId: sdgAcc.id, actualBalance: 15000000, occurredAt: TODAY }, NOW);
+    await recordCustomerReceipt(
+      {
+        customerId: "cust-sdg-ref",
+        amount: 5550,
+        currency: "SDG",
+        paidAt: TODAY,
+        method: "bank_transfer",
+        accountId: sdgAcc.id,
+      },
+      NOW
+    );
+    const opExp = await createExpense(
+      {
+        kind: "operating",
+        beneficiary: "مصروف تشغيلي",
+        amount: 150000,
+        currency: "SDG",
+        expenseDate: TODAY,
+      },
+      NOW
+    );
+    await payExpense(
+      {
+        expenseId: opExp.id,
+        amount: 150000,
+        currency: "SDG",
+        paidAt: TODAY,
+        method: "bank_transfer",
+        accountId: sdgAcc.id,
+      },
+      NOW
+    );
+
     await reconcileBankAccountBalance({ accountId: usdAcc.id, actualBalance: 1200, occurredAt: TODAY }, NOW);
     await reconcileBankAccountBalance({ accountId: sarAcc.id, actualBalance: 4500, occurredAt: TODAY }, NOW);
     await reconcileBankAccountBalance({ accountId: egpAcc.id, actualBalance: 30000, occurredAt: TODAY }, NOW);
@@ -413,48 +463,91 @@ describe("End-to-End Multi-Currency Settlements & Bankak-Style 4-Currency Ledger
 
     await refreshBankTreasury();
 
-    render(<HomePage />);
+    const { unmount: unmountHome } = render(<HomePage />);
 
-    // 1) Greeting + Bank Balance rectangle exist side by side; popup modal is NOT visible before click
+    // 1) Greeting + Bank Balance rectangle exist side by side; ZERO modal/dialog rendered
     expect(screen.getByText(/طارق عثمان/)).toBeInTheDocument();
     const widget = screen.getByTestId("bank-balance-greeting-widget");
     expect(widget).toBeInTheDocument();
-    expect(screen.queryByTestId("bank-accounts-hub-modal")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    // Default SDG balance (500,000 ج.س) with Bankak account #3283046
+    // Default SDG balance (14,855,550 ج.س) with Bankak account #3283046
     await waitFor(() => {
-      expect(within(widget).getByTestId("bank-greeting-live-balance")).toHaveTextContent("500,000");
+      expect(within(widget).getByTestId("bank-greeting-live-balance")).toHaveTextContent("14,855,550");
       expect(within(widget).getByText("#3283046")).toBeInTheDocument();
     });
 
-    // Switch currency pill on widget to USD -> shows 1,175 $ without opening popup
+    // Click widget -> navigates to dedicated /bank-accounts full page (view: accounts)
+    fireEvent.click(widget);
+    expect(navState.navigateSpy).toHaveBeenCalledWith({
+      to: "/bank-accounts",
+      search: { view: "accounts", currency: "SDG", from: "/" },
+    });
+
+    // Switch currency pill to USD -> shows 1,175 $, click "كشف الحساب" -> navigates directly to dedicated statement view
     fireEvent.click(within(widget).getByTestId("widget-currency-pill-USD"));
     await waitFor(() => {
-      expect(within(widget).getByTestId("bank-greeting-live-balance")).toHaveTextContent("1,175 $");
+      expect(within(widget).getByTestId("bank-greeting-live-balance")).toHaveTextContent("1,175");
     });
-    expect(screen.queryByTestId("bank-accounts-hub-modal")).not.toBeInTheDocument();
+    fireEvent.click(within(widget).getByTestId("bank-greeting-direct-statement-btn"));
+    expect(navState.navigateSpy).toHaveBeenCalledWith({
+      to: "/bank-accounts",
+      search: { view: "statement", currency: "USD", from: "/" },
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    unmountHome();
 
-    // 2) Click the Bank Balance widget -> opens 4-Currency Bank Accounts Hub Modal
-    fireEvent.click(widget);
-    const modal = await screen.findByTestId("bank-accounts-hub-modal");
-    expect(within(modal).getByTestId("bank-card-balance-SDG")).toHaveTextContent("500,000");
-    expect(within(modal).getByTestId("bank-card-balance-USD")).toHaveTextContent("1,175");
-    expect(within(modal).getByTestId("bank-card-balance-SAR")).toHaveTextContent("4,500");
-    expect(within(modal).getByTestId("bank-card-balance-EGP")).toHaveTextContent("30,000");
+    // 2) Render Dedicated BankAccountsPage (Accounts view) -> 4 cards, single Back button, ZERO dialog/modal
+    const { unmount: unmountAccounts } = render(
+      <BankAccountsPage initialViewOverride="accounts" initialCurrencyOverride="SDG" />
+    );
+    const page = screen.getByTestId("bank-accounts-page");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(page).getByTestId("bank-accounts-back-btn")).toBeInTheDocument();
+    expect(within(page).getByTestId("bank-card-balance-SDG")).toHaveTextContent("14,855,550");
+    expect(within(page).getByTestId("bank-card-balance-USD")).toHaveTextContent("1,175");
+    expect(within(page).getByTestId("bank-card-balance-SAR")).toHaveTextContent("4,500");
+    expect(within(page).getByTestId("bank-card-balance-EGP")).toHaveTextContent("30,000");
 
-    // 3) Click "عرض كشف الحساب" on USD card -> shows Bankak statement with period tabs + Green (+) and Red (-) cards
-    fireEvent.click(within(modal).getByTestId("open-statement-btn-USD"));
-    const statementView = await screen.findByTestId("bank-statement-view-USD");
+    // Clicking balance button on SDG card navigates directly to SDG statement view (UX-001)
+    fireEvent.click(within(page).getByTestId("bank-card-balance-SDG"));
+    expect(navState.navigateSpy).toHaveBeenCalledWith({
+      to: "/bank-accounts",
+      search: { view: "statement", currency: "SDG", from: undefined },
+    });
+    unmountAccounts();
 
-    expect(within(statementView).getByTestId("statement-tab-last5")).toBeInTheDocument();
-    expect(within(statementView).getByTestId("statement-tab-7d")).toBeInTheDocument();
-    expect(within(statementView).getByTestId("statement-tab-30d")).toBeInTheDocument();
-    expect(within(statementView).getByTestId("statement-tab-90d")).toBeInTheDocument();
-    expect(within(statementView).getByTestId("statement-tab-all")).toBeInTheDocument();
+    // 3) Render Dedicated BankAccountsPage (Statement view for SDG & SAR zero-outflow check)
+    const { unmount: unmountStmtSdg } = render(
+      <BankAccountsPage initialViewOverride="statement" initialCurrencyOverride="SDG" />
+    );
+    const sdgStmt = await screen.findByTestId("bank-statement-view-SDG");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // All 5 period filter tabs exist inside flex-wrap bar (no horizontal overflow-x-auto)
+    const tabsBar = within(sdgStmt).getByTestId("bank-statement-period-tabs");
+    expect(tabsBar.className).toContain("flex-wrap");
+    expect(tabsBar.className).not.toContain("overflow-x-auto");
+    expect(within(sdgStmt).getByTestId("statement-tab-last5")).toBeInTheDocument();
+    expect(within(sdgStmt).getByTestId("statement-tab-7d")).toBeInTheDocument();
+    expect(within(sdgStmt).getByTestId("statement-tab-30d")).toBeInTheDocument();
+    expect(within(sdgStmt).getByTestId("statement-tab-90d")).toBeInTheDocument();
+    expect(within(sdgStmt).getByTestId("statement-tab-all")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(within(statementView).getByTestId("statement-amount-in")).toHaveTextContent("+$ 1,200");
-      expect(within(statementView).getByTestId("statement-amount-out")).toHaveTextContent("-$ 25");
+      expect(within(sdgStmt).getByTestId("statement-summary-balance")).toHaveTextContent("14,855,550");
+      expect(within(sdgStmt).getByTestId("statement-summary-inflow")).toHaveTextContent("+15,005,550");
+      expect(within(sdgStmt).getByTestId("statement-summary-outflow")).toHaveTextContent("-150,000");
+    });
+    unmountStmtSdg();
+
+    // SAR has 4,500 inflow and 0 outflow -> MUST display "0" and NEVER "-0" (UX-004)
+    render(<BankAccountsPage initialViewOverride="statement" initialCurrencyOverride="SAR" />);
+    const sarStmt = await screen.findByTestId("bank-statement-view-SAR");
+    await waitFor(() => {
+      const outflowEl = within(sarStmt).getByTestId("statement-summary-outflow");
+      expect(outflowEl.textContent).not.toContain("-0");
+      expect(outflowEl).toHaveTextContent("0");
     });
   });
 

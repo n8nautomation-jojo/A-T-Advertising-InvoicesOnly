@@ -681,29 +681,32 @@ export function CustomerDetailPage({
                           {code} ({curLabel})
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-1.5 text-[10.5px] font-mono">
-                        <div>
+                      <div className="grid grid-cols-3 gap-1.5 text-[10.5px] font-mono min-w-0">
+                        <div className="min-w-0">
                           <span className="text-[9.5px] text-muted-foreground font-sans block">الفواتير</span>
-                          <strong className="text-foreground font-black tabular-nums">
-                            {formatNumber(sum.totalInvoiced)} {curLabel}
+                          <strong className="text-foreground font-black tabular-nums break-words">
+                            <bdi dir="ltr">{formatNumber(Math.abs(sum.totalInvoiced) < 0.005 ? 0 : sum.totalInvoiced)}</bdi>{" "}
+                            <span className="font-sans">{curLabel}</span>
                           </strong>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <span className="text-[9.5px] text-muted-foreground font-sans block">المسدد</span>
-                          <strong className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums">
-                            {formatNumber(sum.totalPaid)} {curLabel}
+                          <strong className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums break-words">
+                            <bdi dir="ltr">{formatNumber(Math.abs(sum.totalPaid) < 0.005 ? 0 : sum.totalPaid)}</bdi>{" "}
+                            <span className="font-sans">{curLabel}</span>
                           </strong>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <span className="text-[9.5px] text-muted-foreground font-sans block">المستحق</span>
                           <strong
-                            className={`font-black tabular-nums ${
+                            className={`font-black tabular-nums break-words ${
                               sum.outstanding > 0.009
                                 ? "text-rose-600 dark:text-rose-400"
                                 : "text-emerald-600 dark:text-emerald-400"
                             }`}
                           >
-                            {formatNumber(sum.outstanding)} {curLabel}
+                            <bdi dir="ltr">{formatNumber(Math.abs(sum.outstanding) < 0.005 ? 0 : sum.outstanding)}</bdi>{" "}
+                            <span className="font-sans">{curLabel}</span>
                           </strong>
                         </div>
                       </div>
@@ -717,63 +720,66 @@ export function CustomerDetailPage({
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs px-2 py-1 bg-secondary/30 rounded-xl font-mono">
                 <div>
                   <span className="text-muted-foreground font-sans text-[11px]">المفوتر: </span>
-                  <strong className="text-foreground font-black">
-                    {formatNumber(currentSummary.totalInvoiced)} {getCurrencyShortLabel(selectedCurrency)}{" "}
-                    <span className="text-[10px] font-normal text-muted-foreground">({selectedCurrency})</span>
+                  <strong className="text-foreground font-black tabular-nums">
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.totalInvoiced) < 0.005 ? 0 : currentSummary.totalInvoiced)}</bdi>{" "}
+                    <span className="font-sans">{getCurrencyShortLabel(selectedCurrency)}</span>{" "}
+                    <span className="text-[10px] font-normal text-muted-foreground">(<bdi dir="ltr">{selectedCurrency}</bdi>)</span>
                   </strong>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans text-[11px]">المسدد: </span>
-                  <strong className="text-emerald-600 dark:text-emerald-400 font-black">
-                    {formatNumber(currentSummary.totalPaid)} {getCurrencyShortLabel(selectedCurrency)}{" "}
-                    <span className="text-[10px] font-normal">({selectedCurrency})</span>
+                  <strong className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums">
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.totalPaid) < 0.005 ? 0 : currentSummary.totalPaid)}</bdi>{" "}
+                    <span className="font-sans">{getCurrencyShortLabel(selectedCurrency)}</span>{" "}
+                    <span className="text-[10px] font-normal">(<bdi dir="ltr">{selectedCurrency}</bdi>)</span>
                   </strong>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans text-[11px]">المتبقي القائم: </span>
-                  <strong className={currentSummary.outstanding > 0.009 ? "text-rose-600 font-black" : "text-emerald-600 font-bold"}>
-                    {formatNumber(currentSummary.outstanding)} {getCurrencyShortLabel(selectedCurrency)}{" "}
-                    <span className="text-[10px] font-normal">({selectedCurrency})</span>
+                  <strong className={currentSummary.outstanding > 0.009 ? "text-rose-600 font-black tabular-nums" : "text-emerald-600 font-bold tabular-nums"}>
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.outstanding) < 0.005 ? 0 : currentSummary.outstanding)}</bdi>{" "}
+                    <span className="font-sans">{getCurrencyShortLabel(selectedCurrency)}</span>{" "}
+                    <span className="text-[10px] font-normal">(<bdi dir="ltr">{selectedCurrency}</bdi>)</span>
                   </strong>
                 </div>
                 <div className="text-[11px] font-sans text-muted-foreground">
-                  إجمالي الفواتير: <span className="font-bold text-foreground">{currentSummary.totalInvoicesCount}</span>
+                  إجمالي الفواتير: <bdi dir="ltr" className="font-mono font-bold text-foreground">{currentSummary.totalInvoicesCount}</bdi>
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div className="rounded-xl border border-border/60 bg-secondary/35 p-3 space-y-1">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 min-w-0">
+                <div className="rounded-xl border border-border/60 bg-secondary/35 p-2.5 sm:p-3 space-y-1 min-w-0">
                   <span className="text-[10.5px] font-bold text-muted-foreground block">إجمالي الفواتير الصادرة</span>
-                  <p className="font-mono text-base sm:text-lg font-black text-foreground tabular-nums">
-                    {formatNumber(currentSummary.totalInvoiced)}{" "}
-                    <span className="text-[10px] font-normal text-muted-foreground">
-                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                  <p className="font-mono text-sm sm:text-lg font-black text-foreground tabular-nums break-words">
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.totalInvoiced) < 0.005 ? 0 : currentSummary.totalInvoiced)}</bdi>{" "}
+                    <span className="font-sans text-[10px] font-normal text-muted-foreground">
+                      {getCurrencyShortLabel(selectedCurrency)} (<bdi dir="ltr">{selectedCurrency}</bdi>)
                     </span>
                   </p>
                   <span className="text-[10px] text-muted-foreground block">
-                    {currentSummary.totalInvoicesCount} فاتورة محررة
+                    <bdi dir="ltr" className="font-mono">{currentSummary.totalInvoicesCount}</bdi> فاتورة محررة
                   </span>
                 </div>
 
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-1">
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2.5 sm:p-3 space-y-1 min-w-0">
                   <span className="text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400 block">إجمالي المبالغ المدفوعة</span>
-                  <p className="font-mono text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                    {formatNumber(currentSummary.totalPaid)}{" "}
-                    <span className="text-[10px] font-normal">
-                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                  <p className="font-mono text-sm sm:text-lg font-black text-emerald-600 dark:text-emerald-400 tabular-nums break-words">
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.totalPaid) < 0.005 ? 0 : currentSummary.totalPaid)}</bdi>{" "}
+                    <span className="font-sans text-[10px] font-normal">
+                      {getCurrencyShortLabel(selectedCurrency)} (<bdi dir="ltr">{selectedCurrency}</bdi>)
                     </span>
                   </p>
                   <span className="text-[10px] text-emerald-600/80 block">
-                    {currentSummary.paidInvoicesCount} مسددة بالكامل
+                    <bdi dir="ltr" className="font-mono">{currentSummary.paidInvoicesCount}</bdi> مسددة بالكامل
                   </span>
                 </div>
 
-                <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 space-y-1">
+                <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-2.5 sm:p-3 space-y-1 min-w-0">
                   <span className="text-[10.5px] font-bold text-rose-700 dark:text-rose-400 block">المبالغ المستحقة (مديونية)</span>
-                  <p className="font-mono text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 tabular-nums">
-                    {formatNumber(currentSummary.outstanding)}{" "}
-                    <span className="text-[10px] font-normal">
-                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                  <p className="font-mono text-sm sm:text-lg font-black text-rose-600 dark:text-rose-400 tabular-nums break-words">
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.outstanding) < 0.005 ? 0 : currentSummary.outstanding)}</bdi>{" "}
+                    <span className="font-sans text-[10px] font-normal">
+                      {getCurrencyShortLabel(selectedCurrency)} (<bdi dir="ltr">{selectedCurrency}</bdi>)
                     </span>
                   </p>
                   <span className="text-[10px] text-rose-600/80 block">
@@ -783,24 +789,24 @@ export function CustomerDetailPage({
                   </span>
                 </div>
 
-                <div className="rounded-xl border border-border/60 bg-secondary/35 p-3 space-y-1">
+                <div className="rounded-xl border border-border/60 bg-secondary/35 p-2.5 sm:p-3 space-y-1 min-w-0">
                   <span className="text-[10.5px] font-bold text-muted-foreground block">أرصدة مقدمة / دفعات دائنة</span>
-                  <p className="font-mono text-base sm:text-lg font-black text-foreground tabular-nums">
-                    {formatNumber(currentSummary.advanceCredit)}{" "}
-                    <span className="text-[10px] font-normal text-muted-foreground">
-                      {getCurrencyShortLabel(selectedCurrency)} ({selectedCurrency})
+                  <p className="font-mono text-sm sm:text-lg font-black text-foreground tabular-nums break-words">
+                    <bdi dir="ltr">{formatNumber(Math.abs(currentSummary.advanceCredit) < 0.005 ? 0 : currentSummary.advanceCredit)}</bdi>{" "}
+                    <span className="font-sans text-[10px] font-normal text-muted-foreground">
+                      {getCurrencyShortLabel(selectedCurrency)} (<bdi dir="ltr">{selectedCurrency}</bdi>)
                     </span>
                   </p>
                   <span className="text-[10px] text-muted-foreground block">
-                    {currentSummary.partialInvoicesCount} فاتورة بسداد جزئي
+                    <bdi dir="ltr" className="font-mono">{currentSummary.partialInvoicesCount}</bdi> فاتورة بسداد جزئي
                   </span>
                 </div>
               </div>
             )}
           </div>
 
-          {/* 3. تبويبات مساحة العمل الكاملة */}
-          <div className="rounded-2xl border border-border/70 bg-card p-1 shadow-2xs flex items-center gap-1.5 text-xs font-black overflow-x-auto scrollbar-none overscroll-x-contain select-none">
+          {/* 3. تبويبات مساحة العمل الكاملة (تلتف بمرونة داخل عرض الشاشة دون قص) */}
+          <div className="rounded-2xl border border-border/70 bg-card p-1 shadow-2xs flex flex-wrap items-center gap-1.5 text-xs font-black select-none w-full min-w-0">
             {[
               { key: "invoices" as const, label: `سجل الفواتير (${currentInvoicesForCurrency.length})` },
               { key: "statement" as const, label: `كشف الحساب المالي (${selectedCurrency}) (${statement?.lines.length || 0})` },
@@ -813,7 +819,7 @@ export function CustomerDetailPage({
                   playTapSound();
                   setActiveTab(tab.key);
                 }}
-                className={`px-4 py-2 rounded-xl transition-all cursor-pointer touch-manipulation active:scale-95 shrink-0 ${
+                className={`px-3.5 sm:px-4 py-2 rounded-xl transition-all cursor-pointer touch-manipulation active:scale-95 flex-1 sm:flex-initial text-center ${
                   activeTab === tab.key
                     ? "bg-primary text-white shadow-2xs"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -860,12 +866,12 @@ export function CustomerDetailPage({
             )}
 
             {activeTab === "invoices" && customerProformas.length > 0 && (
-              <div className="rounded-2xl border border-[#C5A059]/30 bg-card p-3.5 space-y-2.5 shadow-2xs">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-[#C5A059]" />
-                    <span className="text-xs font-black text-foreground">
-                      عروض الأسعار المرتبطة بالعميل ({customerProformas.length})
+              <div className="rounded-2xl border border-[#C5A059]/30 bg-card p-3.5 space-y-2.5 shadow-2xs w-full min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-4 w-4 text-[#C5A059] shrink-0" />
+                    <span className="text-xs font-black text-foreground break-words">
+                      عروض الأسعار المرتبطة بالعميل (<bdi dir="ltr">{customerProformas.length}</bdi>)
                     </span>
                   </div>
                   <span className="text-[10px] font-bold text-muted-foreground">
@@ -876,20 +882,22 @@ export function CustomerDetailPage({
                   {customerProformas.map((pf) => (
                     <div
                       key={pf.id}
-                      className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs"
+                      className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs min-w-0"
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-mono font-black text-primary" dir="ltr">
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
+                        <bdi dir="ltr" className="font-mono font-black text-primary tabular-nums">
                           {pf.reference || `#${pf.meta.serial}`}
-                        </span>
-                        <span className="text-muted-foreground font-mono text-[11px]">
+                        </bdi>
+                        <bdi dir="ltr" className="text-muted-foreground font-mono text-[11px] tabular-nums">
                           {pf.meta.date}
-                        </span>
+                        </bdi>
                         <span className="font-mono font-bold text-foreground tabular-nums">
-                          {formatNumber(pf.totalAmount)} {getCurrencyShortLabel(pf.currency)} ({sanitizeCurrency(pf.currency, "SDG")})
+                          <bdi dir="ltr">{formatNumber(Math.abs(Number(pf.totalAmount) || 0) < 0.005 ? 0 : pf.totalAmount)}</bdi>{" "}
+                          <span className="font-sans">{getCurrencyShortLabel(pf.currency)}</span>{" "}
+                          (<bdi dir="ltr">{sanitizeCurrency(pf.currency, "SDG")}</bdi>)
                         </span>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 shrink-0">
                         <Button
                           type="button"
                           size="sm"

@@ -106,7 +106,7 @@ export function CustomerDialog({ open, onClose, onSave, initialData }: Props) {
         dir="rtl"
         className="max-w-lg w-[95vw] p-0 rounded-2xl bg-card border-border/80 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
       >
-        <div className="p-4 sm:p-5 border-b border-border/60 bg-muted/20 flex items-center justify-between">
+        <div className="p-4 pl-12 sm:p-5 sm:pl-14 border-b border-border/60 bg-muted/20 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0">
               {initialData ? <Pencil className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}

@@ -165,8 +165,8 @@ export function CustomerDetailInvoicesTab({
         </div>
       </div>
 
-      {/* تبويبات الفلترة حسب الحالة مع أعداد حية */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none overscroll-x-contain select-none">
+      {/* تبويبات الفلترة حسب الحالة مع أعداد حية (تلتف بمرونة داخل عرض الشاشة) */}
+      <div className="flex flex-wrap items-center gap-1.5 text-xs select-none w-full min-w-0">
         {[
           { key: "all" as const, label: `كل الفواتير (${invoiceStatusCounts.all})` },
           { key: "unpaid" as const, label: `غير مسددة (${invoiceStatusCounts.unpaid})` },
@@ -181,7 +181,7 @@ export function CustomerDetailInvoicesTab({
               playTapSound();
               setInvoiceStatusFilter(sub.key);
             }}
-            className={`px-3.5 py-1.5 rounded-full font-bold shrink-0 transition-all cursor-pointer touch-manipulation active:scale-95 ${
+            className={`px-3 py-1.5 rounded-full font-bold transition-all cursor-pointer touch-manipulation active:scale-95 ${
               invoiceStatusFilter === sub.key
                 ? "bg-primary text-white shadow-2xs"
                 : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground border border-border/50"
@@ -193,34 +193,49 @@ export function CustomerDetailInvoicesTab({
       </div>
 
       {processedInvoices.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between text-xs px-2 text-muted-foreground gap-2">
-          <div>
+        <div className="flex flex-wrap items-center justify-between text-xs px-2 text-muted-foreground gap-2 w-full min-w-0">
+          <div className="min-w-0 break-words">
             عرض{" "}
-            <span className="font-bold text-foreground">
+            <bdi dir="ltr" className="font-mono font-bold text-foreground">
               {Math.min((invoicePage - 1) * invoicePageSize + 1, processedInvoices.length)} -{" "}
               {Math.min(invoicePage * invoicePageSize, processedInvoices.length)}
-            </span>{" "}
+            </bdi>{" "}
             من إجمالي{" "}
-            <span className="font-bold text-foreground">{processedInvoices.length}</span> فاتورة
+            <bdi dir="ltr" className="font-mono font-bold text-foreground">
+              {processedInvoices.length}
+            </bdi>{" "}
+            فاتورة
             {deferredInvoiceSearch && (
-              <span className="text-primary font-bold mr-1.5">
+              <span className="text-primary font-bold mr-1.5 break-words">
                 (تمت التصفية حسب: "{deferredInvoiceSearch}")
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-3 font-mono text-[11px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
             <span>
-              إجمالي الصفحة:{" "}
-              <strong className="text-foreground font-black">{formatNumber(pageFinancials.pageTotal)}</strong>{" "}
-              {selectedCurrency}
+              <span className="font-sans">إجمالي الصفحة: </span>
+              <strong className="text-foreground font-black tabular-nums">
+                <bdi dir="ltr">
+                  {formatNumber(Math.abs(pageFinancials.pageTotal) < 0.005 ? 0 : pageFinancials.pageTotal)}
+                </bdi>
+              </strong>{" "}
+              <bdi dir="ltr">{selectedCurrency}</bdi>
             </span>
             <span>
-              المتبقي في الصفحة:{" "}
-              <strong className={pageFinancials.pageRemaining > 0 ? "text-rose-600 font-bold" : "text-emerald-600 font-bold"}>
-                {formatNumber(pageFinancials.pageRemaining)}
+              <span className="font-sans">المتبقي في الصفحة: </span>
+              <strong
+                className={
+                  pageFinancials.pageRemaining > 0.005
+                    ? "text-rose-600 font-bold tabular-nums"
+                    : "text-emerald-600 font-bold tabular-nums"
+                }
+              >
+                <bdi dir="ltr">
+                  {formatNumber(Math.abs(pageFinancials.pageRemaining) < 0.005 ? 0 : pageFinancials.pageRemaining)}
+                </bdi>
               </strong>{" "}
-              {selectedCurrency}
+              <bdi dir="ltr">{selectedCurrency}</bdi>
             </span>
           </div>
         </div>
@@ -231,250 +246,282 @@ export function CustomerDetailInvoicesTab({
           لا توجد فواتير مطابقة لهذا التصنيف أو نتيجة البحث
         </div>
       ) : invoiceViewMode === "table" ? (
-        <div className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs">
-          <div className="overflow-x-auto overscroll-x-contain">
-            <table className="w-full text-right text-xs">
+        <div className="rounded-2xl border border-border/70 overflow-hidden bg-card shadow-2xs w-full max-w-full">
+          <div className="overflow-x-auto overscroll-x-contain w-full max-w-full">
+            <table className="w-full text-right text-xs table-auto">
               <thead className="sticky top-0 bg-muted/95 backdrop-blur-xs text-muted-foreground text-[11px] border-b border-border/70 z-10 shadow-xs">
                 <tr>
-                  <th className="py-3 px-3.5 font-black">رقم الفاتورة</th>
-                  <th className="py-3 px-3.5 font-black">التاريخ</th>
-                  <th className="py-3 px-3.5 font-black text-left" dir="ltr">الإجمالي</th>
-                  <th className="py-3 px-3.5 font-black text-left" dir="ltr">المتبقي</th>
-                  <th className="py-3 px-3.5 font-black text-center">الحالة</th>
-                  <th className="py-3 px-3.5 font-black text-center">الإجراءات</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black whitespace-nowrap">رقم الفاتورة</th>
+                  <th className="hidden md:table-cell py-2.5 px-3 font-black whitespace-nowrap">التاريخ</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-left whitespace-nowrap">الإجمالي</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-left whitespace-nowrap">المتبقي</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-center whitespace-nowrap">الحالة</th>
+                  <th className="py-2.5 px-2 sm:px-3.5 font-black text-center whitespace-nowrap">الإجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/40 font-mono text-[11px]">
-                {paginatedInvoices.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-secondary/40 transition-colors">
-                    <td className="py-3 px-3.5 font-black text-primary text-xs" dir="ltr">
-                      {inv.reference || `#${inv.serial}`}
-                    </td>
-                    <td className="py-3 px-3.5 text-muted-foreground font-sans">
-                      {inv.date}
-                      {inv.dueDate && (
+              <tbody className="divide-y divide-border/40 text-[11px]">
+                {paginatedInvoices.map((inv) => {
+                  const cleanTotal = Math.abs(Number(inv.totalAmount) || 0) < 0.005 ? 0 : Number(inv.totalAmount) || 0;
+                  const cleanRem = Math.abs(Number(inv.remainingAmount) || 0) < 0.005 ? 0 : Number(inv.remainingAmount) || 0;
+                  return (
+                    <tr key={inv.id} className="hover:bg-secondary/40 transition-colors align-middle">
+                      <td className="py-2.5 px-2 sm:px-3.5 font-black text-primary text-xs whitespace-nowrap">
+                        <bdi dir="ltr" className="font-mono tabular-nums">
+                          {inv.reference || `#${inv.serial}`}
+                        </bdi>
+                        <span className="md:hidden block mt-0.5 text-[10px] font-mono font-normal text-muted-foreground">
+                          <bdi dir="ltr">{inv.date}</bdi>
+                        </span>
+                        {inv.dueDate && (
+                          <span
+                            className={`md:hidden block text-[9.5px] font-sans ${
+                              inv.status === "overdue" ? "text-rose-600 font-bold" : "text-muted-foreground/70"
+                            }`}
+                          >
+                            الاستحقاق: <bdi dir="ltr" className="font-mono">{inv.dueDate}</bdi>
+                          </span>
+                        )}
+                      </td>
+                      <td className="hidden md:table-cell py-2.5 px-3 text-muted-foreground font-sans whitespace-nowrap">
+                        <bdi dir="ltr" className="font-mono">{inv.date}</bdi>
+                        {inv.dueDate && (
+                          <span
+                            className={`block text-[9.5px] ${
+                              inv.status === "overdue" ? "text-rose-600 font-bold" : "text-muted-foreground/70"
+                            }`}
+                          >
+                            الاستحقاق: <bdi dir="ltr" className="font-mono">{inv.dueDate}</bdi>
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-2 sm:px-3.5 text-left font-mono font-black tabular-nums text-foreground text-xs whitespace-nowrap">
+                        <bdi dir="ltr">{formatNumber(cleanTotal)}</bdi>{" "}
+                        <bdi dir="ltr" className="text-[10px] font-bold text-muted-foreground">
+                          {inv.currency}
+                        </bdi>
+                      </td>
+                      <td className="py-2.5 px-2 sm:px-3.5 text-left font-black tabular-nums text-xs whitespace-nowrap">
+                        {cleanRem > 0 ? (
+                          <span className="font-mono text-rose-600 dark:text-rose-400">
+                            <bdi dir="ltr">{formatNumber(cleanRem)}</bdi>{" "}
+                            <bdi dir="ltr" className="text-[10px]">
+                              {inv.currency}
+                            </bdi>
+                          </span>
+                        ) : (
+                          <span className="text-emerald-600 font-sans font-bold">مسددة</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-2 sm:px-3.5 text-center whitespace-nowrap">
                         <span
-                          className={`block text-[9.5px] ${
-                            inv.status === "overdue" ? "text-rose-600 font-bold" : "text-muted-foreground/70"
-                          }`}
+                          className={`inline-block rounded-full px-2 sm:px-2.5 py-0.5 text-[9.5px] font-sans font-black border ${inv.statusBadgeColor}`}
                         >
-                          الاستحقاق: {inv.dueDate}
+                          {inv.statusLabel}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3.5 text-left font-black tabular-nums text-foreground text-xs" dir="ltr">
-                      {formatNumber(inv.totalAmount)} {inv.currency}
-                    </td>
-                    <td className="py-3 px-3.5 text-left font-black tabular-nums text-xs" dir="ltr">
-                      {inv.remainingAmount > 0 ? (
-                        <span className="text-rose-600 dark:text-rose-400">
-                          {formatNumber(inv.remainingAmount)} {inv.currency}
-                        </span>
-                      ) : (
-                        <span className="text-emerald-600 font-sans font-bold">مسددة</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3.5 text-center">
-                      <span
-                        className={`inline-block rounded-full px-2.5 py-0.5 text-[9.5px] font-sans font-black border ${inv.statusBadgeColor}`}
-                      >
-                        {inv.statusLabel}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3.5 text-center font-sans">
-                      <div className="flex items-center justify-center gap-1.5">
-                        {inv.remainingAmount > 0 && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onCollectInvoice(inv.id)}
-                            className="h-7 px-2.5 rounded-lg text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer"
-                            title="تحصيل دفعة لهذه الفاتورة"
-                          >
-                            تحصيل
-                          </Button>
-                        )}
-                        {onPreviewInvoice && (
+                      </td>
+                      <td className="py-2.5 px-2 sm:px-3.5 text-center font-sans">
+                        <div className="flex flex-wrap sm:flex-nowrap items-center justify-center gap-0.5 sm:gap-1.5">
+                          {cleanRem > 0 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onCollectInvoice(inv.id)}
+                              className="h-7 px-2 sm:px-2.5 rounded-lg text-[11px] sm:text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer"
+                              title="تحصيل دفعة لهذه الفاتورة"
+                            >
+                              تحصيل
+                            </Button>
+                          )}
+                          {onPreviewInvoice && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onPreviewInvoice(inv.id)}
+                              className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
+                              title="معاينة الفاتورة"
+                              aria-label="معاينة الفاتورة"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {onEditInvoice && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onEditInvoice(inv.id)}
+                              className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-blue-600 cursor-pointer"
+                              title="تعديل الفاتورة"
+                              aria-label="تعديل الفاتورة"
+                            >
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
-                            onClick={() => onPreviewInvoice(inv.id)}
+                            onClick={() => onPrintInvoice(inv.id)}
                             className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
-                            title="معاينة الفاتورة"
-                            aria-label="معاينة الفاتورة"
+                            title="طباعة الفاتورة"
                           >
-                            <Eye className="h-3.5 w-3.5" />
+                            <Printer className="h-3.5 w-3.5" />
                           </Button>
-                        )}
-                        {onEditInvoice && (
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
-                            onClick={() => onEditInvoice(inv.id)}
-                            className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-blue-600 cursor-pointer"
-                            title="تعديل الفاتورة"
-                            aria-label="تعديل الفاتورة"
+                            onClick={() => onShareInvoice(inv.id)}
+                            className="h-7 w-7 p-0 rounded-lg text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
+                            title="مشاركة الفاتورة عبر واتساب"
                           >
-                            <Edit2 className="h-3.5 w-3.5" />
+                            <Share2 className="h-3.5 w-3.5" />
                           </Button>
-                        )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => onPrintInvoice(inv.id)}
-                          className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
-                          title="طباعة الفاتورة"
-                        >
-                          <Printer className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => onShareInvoice(inv.id)}
-                          className="h-7 w-7 p-0 rounded-lg text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
-                          title="مشاركة الفاتورة عبر واتساب"
-                        >
-                          <Share2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {paginatedInvoices.map((inv) => (
-            <div
-              key={inv.id}
-              className="rounded-2xl border border-border/70 bg-card hover:bg-secondary/30 transition-all p-4 space-y-3 shadow-2xs"
-            >
-              <div className="flex items-start justify-between gap-2 border-b border-border/40 pb-2.5">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-black text-sm text-primary" dir="ltr">
-                      {inv.reference || `#${inv.serial}`}
-                    </span>
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-[9.5px] font-black border ${inv.statusBadgeColor}`}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full min-w-0">
+          {paginatedInvoices.map((inv) => {
+            const cleanTotal = Math.abs(Number(inv.totalAmount) || 0) < 0.005 ? 0 : Number(inv.totalAmount) || 0;
+            const cleanRem = Math.abs(Number(inv.remainingAmount) || 0) < 0.005 ? 0 : Number(inv.remainingAmount) || 0;
+            return (
+              <div
+                key={inv.id}
+                className="rounded-2xl border border-border/70 bg-card hover:bg-secondary/30 transition-all p-3.5 sm:p-4 space-y-3 shadow-2xs w-full min-w-0"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border/40 pb-2.5 min-w-0">
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <bdi dir="ltr" className="font-mono font-black text-sm text-primary tabular-nums">
+                        {inv.reference || `#${inv.serial}`}
+                      </bdi>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[9.5px] font-black border ${inv.statusBadgeColor}`}
+                      >
+                        {inv.statusLabel}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                      <span>
+                        التاريخ: <bdi dir="ltr" className="font-mono">{inv.date}</bdi>
+                      </span>
+                      {inv.dueDate && (
+                        <span className={inv.status === "overdue" ? "text-rose-600 font-bold" : ""}>
+                          الاستحقاق: <bdi dir="ltr" className="font-mono">{inv.dueDate}</bdi>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs min-w-0">
+                  <div className="rounded-xl border border-border/60 bg-secondary/30 p-2.5 min-w-0">
+                    <span className="text-[10px] text-muted-foreground font-bold block">إجمالي الفاتورة</span>
+                    <p className="font-mono text-xs sm:text-sm font-black text-foreground tabular-nums break-words mt-0.5">
+                      <bdi dir="ltr">{formatNumber(cleanTotal)}</bdi>{" "}
+                      <bdi dir="ltr" className="text-[11px]">{inv.currency}</bdi>
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-secondary/30 p-2.5 min-w-0">
+                    <span className="text-[10px] text-muted-foreground font-bold block">المتبقي المطلوب</span>
+                    <p className="font-mono text-xs sm:text-sm font-black tabular-nums break-words mt-0.5">
+                      {cleanRem > 0 ? (
+                        <span className="text-rose-600 dark:text-rose-400">
+                          <bdi dir="ltr">{formatNumber(cleanRem)}</bdi>{" "}
+                          <bdi dir="ltr" className="text-[11px]">{inv.currency}</bdi>
+                        </span>
+                      ) : (
+                        <span className="text-emerald-600 font-sans font-bold">مسددة بالكامل</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40">
+                  {cleanRem > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onCollectInvoice(inv.id)}
+                      className="h-8 px-3 rounded-xl text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer active:scale-95"
                     >
-                      {inv.statusLabel}
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    <span>التاريخ: {inv.date}</span>
-                    {inv.dueDate && (
-                      <span className={`mr-2 ${inv.status === "overdue" ? "text-rose-600 font-bold" : ""}`}>
-                        الاستحقاق: {inv.dueDate}
-                      </span>
+                      تحصيل دفعة
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground font-medium">لا توجد مستحقات</span>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-1">
+                    {onPreviewInvoice && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onPreviewInvoice(inv.id)}
+                        className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-foreground cursor-pointer"
+                        title="معاينة الفاتورة"
+                        aria-label="معاينة الفاتورة"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
                     )}
-                  </div>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-xl border border-border/60 bg-secondary/30 p-2.5">
-                  <span className="text-[10px] text-muted-foreground font-bold block">إجمالي الفاتورة</span>
-                  <p className="font-mono text-sm font-black text-foreground tabular-nums mt-0.5">
-                    {formatNumber(inv.totalAmount)} {inv.currency}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border/60 bg-secondary/30 p-2.5">
-                  <span className="text-[10px] text-muted-foreground font-bold block">المتبقي المطلوب</span>
-                  <p className="font-mono text-sm font-black tabular-nums mt-0.5">
-                    {inv.remainingAmount > 0 ? (
-                      <span className="text-rose-600 dark:text-rose-400">
-                        {formatNumber(inv.remainingAmount)} {inv.currency}
-                      </span>
-                    ) : (
-                      <span className="text-emerald-600 font-sans font-bold">مسددة بالكامل</span>
+                    {onEditInvoice && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onEditInvoice(inv.id)}
+                        className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-blue-600 cursor-pointer"
+                        title="تعديل الفاتورة"
+                        aria-label="تعديل الفاتورة"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </Button>
                     )}
-                  </p>
-                </div>
-              </div>
 
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/40">
-                {inv.remainingAmount > 0 ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onCollectInvoice(inv.id)}
-                    className="h-8 px-3 rounded-xl text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer active:scale-95"
-                  >
-                    تحصيل دفعة
-                  </Button>
-                ) : (
-                  <span className="text-xs text-muted-foreground font-medium">لا توجد مستحقات</span>
-                )}
-
-                <div className="flex items-center gap-1.5">
-                  {onPreviewInvoice && (
                     <Button
                       type="button"
                       size="sm"
                       variant="ghost"
-                      onClick={() => onPreviewInvoice(inv.id)}
+                      onClick={() => onPrintInvoice(inv.id)}
                       className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-foreground cursor-pointer"
-                      title="معاينة الفاتورة"
-                      aria-label="معاينة الفاتورة"
+                      title="طباعة الفاتورة"
                     >
-                      <Eye className="h-4 w-4" />
+                      <Printer className="h-4 w-4" />
                     </Button>
-                  )}
 
-                  {onEditInvoice && (
                     <Button
                       type="button"
                       size="sm"
                       variant="ghost"
-                      onClick={() => onEditInvoice(inv.id)}
-                      className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-blue-600 cursor-pointer"
-                      title="تعديل الفاتورة"
-                      aria-label="تعديل الفاتورة"
+                      onClick={() => onShareInvoice(inv.id)}
+                      className="h-8 w-8 p-0 rounded-xl text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
+                      title="مشاركة الفاتورة عبر واتساب"
                     >
-                      <Edit2 className="h-4 w-4" />
+                      <Share2 className="h-4 w-4" />
                     </Button>
-                  )}
-
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => onPrintInvoice(inv.id)}
-                    className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-foreground cursor-pointer"
-                    title="طباعة الفاتورة"
-                  >
-                    <Printer className="h-4 w-4" />
-                  </Button>
-
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => onShareInvoice(inv.id)}
-                    className="h-8 w-8 p-0 rounded-xl text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
-                    title="مشاركة الفاتورة عبر واتساب"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {totalInvoicePages > 1 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-border/60 text-xs bg-card p-3 rounded-2xl border shadow-2xs">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-center sm:justify-between gap-2 pt-3 border-t border-border/60 text-xs bg-card p-3 rounded-2xl border shadow-2xs w-full min-w-0">
+          <div className="flex flex-wrap items-center justify-center gap-1">
             <Button
               type="button"
               variant="outline"
@@ -504,8 +551,8 @@ export function CustomerDetailInvoicesTab({
               <ChevronRight className="h-4 w-4" />
             </Button>
 
-            <div className="px-3.5 py-1.5 bg-secondary/60 rounded-xl font-mono font-bold text-foreground text-xs border border-border/50">
-              صفحة {invoicePage} من {totalInvoicePages}
+            <div className="px-3 py-1.5 bg-secondary/60 rounded-xl font-mono font-bold text-foreground text-xs border border-border/50">
+              صفحة <bdi dir="ltr">{invoicePage}</bdi> من <bdi dir="ltr">{totalInvoicePages}</bdi>
             </div>
 
             <Button

@@ -137,10 +137,14 @@ if (Capacitor.isNativePlatform()) {
       return;
     }
 
-    // 3. If currently on a sub-route, return hierarchically to home dashboard (/)
+    // 3. If currently on a sub-route, respect router history (preserving previous page state) before falling back to home (/)
     const hash = window.location.hash;
     if (hash && hash !== "#/" && hash !== "") {
-      void router.navigate({ to: "/" });
+      if (window.history.length > 1) {
+        router.history.back();
+      } else {
+        void router.navigate({ to: "/" });
+      }
       return;
     }
 

@@ -87,6 +87,7 @@ export const SIDEBAR_NAV_ITEMS: NavItemConfig[] = [
 ];
 
 export function getTourSectionFromPath(pathname: string): { id: string; label: string } {
+  if (pathname.startsWith("/bank-accounts")) return { id: "finance", label: "الحسابات البنكية وكشف الحساب" };
   if (pathname.startsWith("/billing")) return { id: "billing", label: "الفواتير والمطالبات A4" };
   if (pathname.startsWith("/orders")) return { id: "orders", label: "أرشيف الفواتير والسجل" };
   if (pathname.startsWith("/reports")) return { id: "reports", label: "التقارير والمؤشرات المالية" };

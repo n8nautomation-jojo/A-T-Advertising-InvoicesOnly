@@ -38,13 +38,19 @@ export function InvoicesPageContent() {
   }, [deferredSearch, filterType]);
 
   return (
-    <div className="mx-auto max-w-7xl p-3 space-y-3" dir="rtl">
+    <div className="mx-auto max-w-7xl w-full min-w-0 p-3 space-y-3" dir="rtl">
       {/* 1. الترويسة الرئيسية وزر إنشاء فاتورة جديدة */}
-      <div className="flex items-center justify-between gap-2 rounded-2xl border border-border bg-card p-3 shadow-xs border-r-4 border-r-primary">
-        <div>
-          <h2 className="text-base font-black text-foreground">سجل وأرشيف الفواتير والمطالبات</h2>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            سجل موحد ودائم لكافة فواتير المبيعات، المشتريات، وعروض الأسعار ({stats.totalCount} فاتورة محفوظة)
+      <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-border bg-card p-3 shadow-xs border-r-4 border-r-primary w-full min-w-0">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm sm:text-base font-black text-foreground leading-snug break-words">
+            سجل وأرشيف الفواتير والمطالبات
+          </h2>
+          <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug break-words">
+            سجل موحد ودائم لكافة فواتير المبيعات، المشتريات، وعروض الأسعار (
+            <bdi dir="ltr" className="font-mono font-bold">
+              {stats.totalCount}
+            </bdi>{" "}
+            فاتورة محفوظة)
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -52,7 +58,7 @@ export function InvoicesPageContent() {
             to="/billing"
             className="inline-flex h-9.5 items-center gap-1.5 rounded-xl bg-primary px-3.5 text-xs font-black text-primary-foreground shadow-xs shadow-primary/25 transition-all active:scale-95 touch-manipulation hover:bg-primary/90"
           >
-            <PlusCircle className="h-4 w-4" />
+            <PlusCircle className="h-4 w-4 shrink-0" />
             <span>إصدار فاتورة جديدة</span>
           </Link>
         </div>
@@ -62,7 +68,7 @@ export function InvoicesPageContent() {
       <InvoicesStatsHeader stats={stats} />
 
       {/* 3. صندوق البحث والفرز مع شبكة البطاقات */}
-      <div className="rounded-2xl border border-border bg-card p-3 shadow-xs space-y-2.5">
+      <div className="rounded-2xl border border-border bg-card p-3 shadow-xs space-y-2.5 w-full min-w-0">
         <InvoicesSearchBar
           search={search}
           setSearch={setSearch}
@@ -71,7 +77,7 @@ export function InvoicesPageContent() {
         />
 
         {/* شبكة بطاقات الفواتير مع التقطيع الذكي الخفيف */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1 min-w-0">
           {filteredRecords.length === 0 ? (
             <InvoicesEmptyState />
           ) : (

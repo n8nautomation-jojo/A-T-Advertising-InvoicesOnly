@@ -58,7 +58,7 @@ export function BillingArchiveRowActions({
   const isCalc = rec.kind === "calculator";
 
   return (
-    <div className="flex items-center justify-center gap-1">
+    <div className="flex flex-wrap sm:flex-nowrap items-center justify-center gap-0.5 sm:gap-1">
       {isCustom && rec.type === "sales" && outstanding > 0 && onRecordPayment && (
         <button
           type="button"

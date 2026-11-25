@@ -641,7 +641,7 @@ export function CustomersPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+              <div className="flex flex-wrap items-center gap-1.5 w-full min-w-0">
                 {TABS.map((tab) => {
                   const active = typeFilter === tab.key;
                   return (
@@ -652,7 +652,7 @@ export function CustomersPage() {
                         playTapSound();
                         setTypeFilter(tab.key);
                       }}
-                      className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer touch-manipulation active:scale-95 ${
+                      className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all cursor-pointer touch-manipulation active:scale-95 ${
                         active
                           ? "bg-primary text-white shadow-2xs"
                           : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground border border-border/50"
@@ -665,7 +665,7 @@ export function CustomersPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none border-t border-border/50 pt-2.5">
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2.5 w-full min-w-0">
               <span className="text-[11px] font-black text-muted-foreground shrink-0 ml-1">
                 العملة:
               </span>

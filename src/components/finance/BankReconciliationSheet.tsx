@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownLeft,
+  ArrowRight,
   ArrowUpRight,
   Building2,
   CheckCircle2,
@@ -29,8 +30,9 @@ interface BankReconciliationSheetProps {
   currency: AppCurrency;
   account: FinancialAccount;
   currentBalance: number;
-  onBack: () => void;
+  onBack?: () => void;
   onCompleted: () => void;
+  hideInlineBack?: boolean;
 }
 
 type ModeTab = "reconcile" | "external" | "details";
@@ -41,6 +43,7 @@ export function BankReconciliationSheet({
   currentBalance,
   onBack,
   onCompleted,
+  hideInlineBack = false,
 }: BankReconciliationSheetProps) {
   const [mode, setMode] = useState<ModeTab>("reconcile");
   const [actualInput, setActualInput] = useState(() => String(currentBalance > 0 ? currentBalance : ""));
@@ -157,67 +160,71 @@ export function BankReconciliationSheet({
     }
   };
 
+  const cleanCurrentBalance = Math.abs(currentBalance) < 0.005 ? 0 : currentBalance;
+
   return (
-    <div className="space-y-3.5" dir="rtl">
+    <div className="space-y-3.5 w-full max-w-full min-w-0" dir="rtl">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
-        <div>
-          <h3 className="text-sm sm:text-base font-black text-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
+        <div className="min-w-0">
+          <h3 className="text-sm sm:text-base font-black text-foreground break-words">
             مطابقة وإدارة حساب {curDisplay}
           </h3>
-          <p className="text-[11px] font-bold text-muted-foreground">
-            الرصيد الدفتري الحالي بالتطبيق:{" "}
+          <p className="text-[11px] font-bold text-muted-foreground mt-0.5 break-words">
+            <span>الرصيد الدفتري الحالي بالتطبيق: </span>
             <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
-              {formatNumber(currentBalance)} {curLabel}
+              <bdi dir="ltr">{formatNumber(cleanCurrentBalance)}</bdi> {curLabel}
             </span>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-1 rounded-lg border border-[#B91C1C]/40 bg-white dark:bg-card px-3 py-1.5 text-xs font-black text-[#B91C1C] shadow-2xs hover:bg-rose-50 dark:hover:bg-rose-950/30"
-        >
-          <span>رجوع</span>
-          <span aria-hidden="true">‹</span>
-        </button>
+        {!hideInlineBack && onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1 rounded-lg border border-[#B91C1C]/40 bg-white dark:bg-card px-3 py-1.5 text-xs font-black text-[#B91C1C] shadow-2xs hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+          >
+            <ArrowRight className="h-3.5 w-3.5 shrink-0" />
+            <span>رجوع</span>
+          </button>
+        )}
       </div>
 
-      {/* Mode Switcher */}
-      <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-muted/50 p-1">
+      {/* Mode Switcher (wraps cleanly on narrow phones) */}
+      <div className="flex flex-wrap gap-1.5 rounded-xl bg-muted/50 p-1 w-full min-w-0">
         <button
           type="button"
           onClick={() => setMode("reconcile")}
-          className={`flex items-center justify-center gap-1 rounded-lg py-2 px-2 text-[11px] font-black transition-all ${
+          className={`flex-1 min-w-[96px] flex items-center justify-center gap-1 rounded-lg py-2 px-2 text-[11px] font-black transition-all cursor-pointer ${
             mode === "reconcile"
               ? "bg-card text-foreground shadow-xs"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Scale className="h-3.5 w-3.5 text-emerald-600" />
+          <Scale className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
           <span>مطابقة الرصيد</span>
         </button>
         <button
           type="button"
           onClick={() => setMode("external")}
-          className={`flex items-center justify-center gap-1 rounded-lg py-2 px-2 text-[11px] font-black transition-all ${
+          className={`flex-1 min-w-[116px] flex items-center justify-center gap-1 rounded-lg py-2 px-2 text-[11px] font-black transition-all cursor-pointer ${
             mode === "external"
               ? "bg-card text-foreground shadow-xs"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <ArrowDownLeft className="h-3.5 w-3.5 text-primary" />
+          <ArrowDownLeft className="h-3.5 w-3.5 text-primary shrink-0" />
           <span>إيداع / سحب خارجي</span>
         </button>
         <button
           type="button"
           onClick={() => setMode("details")}
-          className={`flex items-center justify-center gap-1 rounded-lg py-2 px-2 text-[11px] font-black transition-all ${
+          className={`flex-1 min-w-[96px] flex items-center justify-center gap-1 rounded-lg py-2 px-2 text-[11px] font-black transition-all cursor-pointer ${
             mode === "details"
               ? "bg-card text-foreground shadow-xs"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <Settings2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span>رقم الحساب</span>
         </button>
       </div>
@@ -334,7 +341,7 @@ export function BankReconciliationSheet({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div className="space-y-1.5">
               <label className="text-[11px] font-black text-foreground">المبلغ ({curLabel}) *</label>
               <Input

@@ -41,8 +41,8 @@ export const InvoicesSearchBar: React.FC<InvoicesSearchBarProps> = ({
         )}
       </div>
 
-      {/* ألسنة التصفية السريعة */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-t border-border/50 pt-2">
+      {/* ألسنة التصفية السريعة (تلتف بمرونة بدون تمرير أفقي مقصوص) */}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2 w-full min-w-0">
         {INVOICES_FILTER_TABS.map((tab) => {
           const active = filterType === tab.key;
           return (
@@ -50,7 +50,7 @@ export const InvoicesSearchBar: React.FC<InvoicesSearchBarProps> = ({
               key={tab.key}
               type="button"
               onClick={() => setFilterType(tab.key)}
-              className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-bold transition-all duration-150 touch-manipulation active:scale-95 ${
+              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-all duration-150 touch-manipulation active:scale-95 cursor-pointer ${
                 active
                   ? "bg-primary text-primary-foreground shadow-md shadow-primary/25 font-black ring-1 ring-primary/40"
                   : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground border border-border/50"

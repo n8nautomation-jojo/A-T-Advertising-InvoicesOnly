@@ -28,6 +28,8 @@ vi.mock("@tanstack/react-router", () => ({
       {children}
     </a>
   ),
+  useNavigate: () => vi.fn(),
+  useLocation: () => ({ pathname: "/finance" }),
 }));
 
 vi.mock("@/components/layout/PageShell", () => ({

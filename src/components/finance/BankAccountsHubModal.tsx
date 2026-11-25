@@ -6,7 +6,6 @@ import {
   Scale,
   ShoppingBag,
   Wallet,
-  X,
 } from "lucide-react";
 import {
   Dialog,
@@ -94,34 +93,23 @@ export function BankAccountsHubModal({
           className="max-w-lg max-h-[92vh] overflow-y-auto overscroll-y-contain bg-slate-50 dark:bg-background p-0 gap-0 border-border/80"
         >
           {/* Top Crimson-Accented Banking Header */}
-          <DialogHeader className="bg-gradient-to-l from-[#B71C1C] to-[#D32F2F] text-white px-4 py-3.5 rounded-t-lg">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/15 border border-white/25">
-                  <Landmark className="h-4.5 w-4.5 text-white" />
-                </span>
-                <div className="text-right">
-                  <DialogTitle className="text-sm sm:text-base font-black text-white">
-                    {view === "accounts"
-                      ? "تفاصيل الحسابات البنكية"
-                      : view === "statement"
-                      ? "كشف الحساب البنكي"
-                      : "مطابقة وتغذية الرصيد البنكي"}
-                  </DialogTitle>
-                  <p className="text-[10.5px] font-bold text-white/85">
-                    4 حسابات مستقلة (جنيه سوداني · دولار · ريال · جنيه مصري)
-                  </p>
-                </div>
+          <DialogHeader className="bg-gradient-to-l from-[#B71C1C] to-[#D32F2F] text-white px-4 pl-14 py-3.5 rounded-t-lg">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/15 border border-white/25 shrink-0">
+                <Landmark className="h-4.5 w-4.5 text-white" />
+              </span>
+              <div className="text-right min-w-0">
+                <DialogTitle className="text-sm sm:text-base font-black text-white">
+                  {view === "accounts"
+                    ? "تفاصيل الحسابات البنكية"
+                    : view === "statement"
+                    ? "كشف الحساب البنكي"
+                    : "مطابقة وتغذية الرصيد البنكي"}
+                </DialogTitle>
+                <p className="text-[10.5px] font-bold text-white/85">
+                  4 حسابات مستقلة (جنيه سوداني · دولار · ريال · جنيه مصري)
+                </p>
               </div>
-
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                aria-label="إغلاق نافذة الحسابات"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 hover:bg-white/25 text-white transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
             </div>
           </DialogHeader>
 

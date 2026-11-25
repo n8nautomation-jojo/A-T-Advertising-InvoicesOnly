@@ -27,14 +27,16 @@ describe("App routing", () => {
     expect(lastMatchedId("/customers")).toBe("/customers");
   });
 
-  it("renders the finance, suppliers and expenses pages", () => {
+  it("renders the finance, bank-accounts, suppliers and expenses pages", () => {
     expect(lastMatchedId("/finance")).toBe("/finance");
+    expect(lastMatchedId("/bank-accounts")).toBe("/bank-accounts");
     expect(lastMatchedId("/suppliers")).toBe("/suppliers");
     expect(lastMatchedId("/expenses")).toBe("/expenses");
   });
 
   it("never falls back to the bare root route for valid pages", () => {
     expect(lastMatchedId("/billing")).not.toBe(rootRouteId);
+    expect(lastMatchedId("/bank-accounts")).not.toBe(rootRouteId);
     expect(lastMatchedId("/settings")).not.toBe(rootRouteId);
     expect(lastMatchedId("/customers")).not.toBe(rootRouteId);
   });
