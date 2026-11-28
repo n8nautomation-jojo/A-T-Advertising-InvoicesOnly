@@ -109,6 +109,142 @@ export async function getAllCustomInvoices(): Promise<CustomInvoice[]> {
   return rows.map((row) => rowToInvoice(row, itemsByInvoice.get(String(row.id)) || []));
 }
 
+export type CustomInvoiceSortMode = "date-desc" | "date-asc" | "amount-desc" | "amount-asc";
+
+export interface CustomInvoicePageQuery {
+  page?: number;
+  pageSize?: number;
+  type?: CustomInvoiceType | "all";
+  currency?: string;
+  customerId?: string;
+  search?: string;
+  sort?: CustomInvoiceSortMode;
+}
+
+export interface CustomInvoiceSummaryRow {
+  id: string;
+  serial: string;
+  reference?: string | undefined;
+  type: CustomInvoiceType;
+  date: string;
+  dueDate?: string | undefined;
+  partyName: string;
+  partyEnName?: string | undefined;
+  customerId?: string | undefined;
+  supplierId?: string | undefined;
+  currency: string;
+  totalAmount: number;
+  itemsCount: number;
+  createdAt: string;
+}
+
+export interface CustomInvoicePageResult {
+  items: CustomInvoiceSummaryRow[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+/**
+ * High-scale indexed SQLite pagination query built for 100,000+ invoices.
+ * Fetches only the requested page slice without loading all line items into memory.
+ */
+export async function queryCustomInvoicesPage(
+  query: CustomInvoicePageQuery = {}
+): Promise<CustomInvoicePageResult> {
+  const db = await getDb();
+  const pageSize = Math.min(200, Math.max(1, Math.floor(Number(query.pageSize) || 25)));
+  const requestedPage = Math.max(1, Math.floor(Number(query.page) || 1));
+
+  const conditions: string[] = ["c.cancelled_at IS NULL"];
+  const params: any[] = [];
+
+  if (query.type && query.type !== "all") {
+    conditions.push("c.type = ?");
+    params.push(query.type);
+  }
+  if (query.currency && query.currency !== "ALL") {
+    conditions.push("COALESCE(c.currency, 'SDG') = ?");
+    params.push(sanitizeCurrency(query.currency, "SDG"));
+  }
+  if (query.customerId) {
+    conditions.push("c.customer_id = ?");
+    params.push(query.customerId);
+  }
+  const q = (query.search || "").trim();
+  if (q.length > 0) {
+    const like = `%${q}%`;
+    conditions.push(
+      "(c.reference LIKE ? OR c.serial LIKE ? OR c.party_name LIKE ? OR COALESCE(c.party_en_name, '') LIKE ? OR c.date LIKE ?)"
+    );
+    params.push(like, like, like, like, like);
+  }
+
+  const whereSql = conditions.join(" AND ");
+  const countRes = await db.query(
+    `SELECT COUNT(*) AS cnt FROM custom_invoices c WHERE ${whereSql}`,
+    params
+  );
+  const totalCount = Number(countRes.values?.[0]?.cnt) || 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  let orderSql = "c.date DESC, c.created_at DESC, c.id DESC";
+  switch (query.sort) {
+    case "date-asc":
+      orderSql = "c.date ASC, c.created_at ASC, c.id ASC";
+      break;
+    case "amount-desc":
+      orderSql = "c.total_amount DESC, c.date DESC, c.id DESC";
+      break;
+    case "amount-asc":
+      orderSql = "c.total_amount ASC, c.date DESC, c.id DESC";
+      break;
+    default:
+      break;
+  }
+
+  const pageRes = await db.query(
+    `SELECT c.id, c.serial, c.reference, c.type, c.date, c.due_date,
+            c.party_name, c.party_en_name, c.customer_id, c.supplier_id,
+            COALESCE(c.currency, 'SDG') AS resolved_currency,
+            c.total_amount, c.created_at,
+            (SELECT COUNT(*) FROM custom_invoice_items i WHERE i.invoice_id = c.id) AS items_count
+       FROM custom_invoices c
+      WHERE ${whereSql}
+      ORDER BY ${orderSql}
+      LIMIT ? OFFSET ?`,
+    [...params, pageSize, offset]
+  );
+
+  const items: CustomInvoiceSummaryRow[] = (pageRes.values || []).map((row: any) => ({
+    id: String(row.id),
+    serial: String(row.serial ?? ""),
+    reference: row.reference ? String(row.reference) : undefined,
+    type: (row.type as CustomInvoiceType) || "sales",
+    date: String(row.date ?? ""),
+    dueDate: row.due_date ? String(row.due_date) : undefined,
+    partyName: String(row.party_name ?? ""),
+    partyEnName: row.party_en_name ? String(row.party_en_name) : undefined,
+    customerId: row.customer_id ? String(row.customer_id) : undefined,
+    supplierId: row.supplier_id ? String(row.supplier_id) : undefined,
+    currency: sanitizeCurrency(row.resolved_currency, "SDG"),
+    totalAmount: Number(row.total_amount) || 0,
+    itemsCount: Number(row.items_count) || 0,
+    createdAt: String(row.created_at ?? ""),
+  }));
+
+  return {
+    items,
+    totalCount,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
 export async function getCustomInvoiceById(id: string): Promise<CustomInvoice | undefined> {
   const db = await getDb();
   const res = await db.query("SELECT * FROM custom_invoices WHERE id = ?", [id]);

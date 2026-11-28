@@ -1,24 +1,35 @@
-import { useEffect, useState, useDeferredValue } from "react";
+import { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import { Link } from "@tanstack/react-router";
-import { PlusCircle } from "lucide-react";
+import { PlusCircle, ArrowUpDown } from "lucide-react";
 import type { InvoiceRecord } from "@/lib/invoicesStore";
 import type { CustomInvoice } from "@/lib/billing/types";
 import type { ProformaInvoice } from "@/lib/proforma/types";
+import { CURRENCY_LIST } from "@/lib/currency/types";
+import { formatNumber } from "@/lib/printCalculator";
 import { useUnifiedInvoices } from "./useUnifiedInvoices";
 import { InvoicesStatsHeader } from "./InvoicesStatsHeader";
 import { InvoicesSearchBar } from "./InvoicesSearchBar";
 import { InvoiceRecordCard } from "./InvoiceRecordCard";
+import { InvoicePaginationBar } from "./InvoicePaginationBar";
 import { InvoicesEmptyState } from "./InvoicesEmptyState";
 import { InvoicesModalsManager } from "./InvoicesModalsManager";
+
+type ArchiveSortOrder = "date-desc" | "date-asc" | "amount-desc";
 
 /**
  * محتوى شاشة سجل وأرشيف الفواتير والمطالبات الشاملة لكافة مصادر النظام
  * تشمل: الفواتير المبدئية Proforma A4 + فواتير المبيعات والمطالبات + إيصالات الحاسبة
+ * مصممة بترقيم صفحات ثابت الـ DOM لدعم 100,000+ فاتورة بسلاسة فائقة.
  */
 export function InvoicesPageContent() {
+  const listTopRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [filterType, setFilterType] = useState("all");
+  const [currencyFilter, setCurrencyFilter] = useState("ALL");
+  const [sortOrder, setSortOrder] = useState<ArchiveSortOrder>("date-desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // الحالات النشطة للنوافذ المنبثقة
   const [previewCalcInvoice, setPreviewCalcInvoice] = useState<InvoiceRecord | null>(null);
@@ -28,14 +39,45 @@ export function InvoicesPageContent() {
   const [editingProformaInvoice, setEditingProformaInvoice] = useState<ProformaInvoice | null>(null);
 
   // استخدام الخطاف الموحد لإدارة البيانات مع معالجة غير معطلة لواجهة الإدخال
-  const { filteredRecords, stats } = useUnifiedInvoices(deferredSearch, filterType);
+  const { filteredRecords, stats } = useUnifiedInvoices(deferredSearch, filterType, currencyFilter);
 
-  // تقطيع القائمة المعروضة تدريجياً لضمان خفة الـ DOM وسرعة الاستجابة اللحظية
-  const [visibleCount, setVisibleCount] = useState(40);
+  const sortedRecords = useMemo(() => {
+    if (sortOrder === "date-desc") return filteredRecords;
+    const copy = [...filteredRecords];
+    if (sortOrder === "date-asc") {
+      copy.sort((a, b) => {
+        const dc = (a.date || "").localeCompare(b.date || "");
+        if (dc !== 0) return dc;
+        return a.serial.localeCompare(b.serial, undefined, { numeric: true });
+      });
+    } else if (sortOrder === "amount-desc") {
+      copy.sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0));
+    }
+    return copy;
+  }, [filteredRecords, sortOrder]);
 
   useEffect(() => {
-    setVisibleCount(40);
-  }, [deferredSearch, filterType]);
+    setPage(1);
+  }, [deferredSearch, filterType, currencyFilter, sortOrder, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRecords.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  const pageItems = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return sortedRecords.slice(start, start + pageSize);
+  }, [sortedRecords, safePage, pageSize]);
+
+  const handlePageChange = (nextPage: number) => {
+    setPage(nextPage);
+    if (listTopRef.current && typeof listTopRef.current.scrollIntoView === "function") {
+      try {
+        listTopRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {
+        // ignore jsdom unsupported options
+      }
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl w-full min-w-0 p-3 space-y-3" dir="rtl">
@@ -48,7 +90,7 @@ export function InvoicesPageContent() {
           <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug break-words">
             سجل موحد ودائم لكافة فواتير المبيعات، المشتريات، وعروض الأسعار (
             <bdi dir="ltr" className="font-mono font-bold">
-              {stats.totalCount}
+              {formatNumber(stats.totalCount)}
             </bdi>{" "}
             فاتورة محفوظة)
           </p>
@@ -67,46 +109,86 @@ export function InvoicesPageContent() {
       {/* 2. مؤشرات الإجماليات المالية */}
       <InvoicesStatsHeader stats={stats} />
 
-      {/* 3. صندوق البحث والفرز مع شبكة البطاقات */}
-      <div className="rounded-2xl border border-border bg-card p-3 shadow-xs space-y-2.5 w-full min-w-0">
-        <InvoicesSearchBar
-          search={search}
-          setSearch={setSearch}
-          filterType={filterType}
-          setFilterType={setFilterType}
-        />
+      {/* 3. صندوق البحث والفرز مع شبكة البطاقات والترقيم الذكي لـ 100,000+ فاتورة */}
+      <div
+        ref={listTopRef}
+        className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden w-full min-w-0"
+      >
+        <div className="p-3 space-y-2.5">
+          <InvoicesSearchBar
+            search={search}
+            setSearch={setSearch}
+            filterType={filterType}
+            setFilterType={setFilterType}
+          />
 
-        {/* شبكة بطاقات الفواتير مع التقطيع الذكي الخفيف */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1 min-w-0">
-          {filteredRecords.length === 0 ? (
-            <InvoicesEmptyState />
-          ) : (
-            filteredRecords.slice(0, visibleCount).map((item) => (
-              <InvoiceRecordCard
-                key={`${item.kind}-${item.id}`}
-                item={item}
-                onPreviewCustom={setPreviewCustomInvoice}
-                onPreviewCalc={setPreviewCalcInvoice}
-                onPreviewProforma={setPreviewProformaInvoice}
-                onEditCustom={setEditingCustomInvoice}
-                onEditProforma={setEditingProformaInvoice}
-              />
-            ))
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <select
+                aria-label="تصفية الأرشيف حسب العملة"
+                value={currencyFilter}
+                onChange={(e) => setCurrencyFilter(e.target.value)}
+                className="h-8 rounded-xl border border-border/60 bg-background px-2 text-[11px] font-black text-foreground outline-hidden cursor-pointer"
+              >
+                <option value="ALL">كل العملات</option>
+                {CURRENCY_LIST.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} {c.code}
+                  </option>
+                ))}
+              </select>
+
+              <div className="inline-flex items-center gap-1 h-8 rounded-xl border border-border/60 bg-background px-2">
+                <ArrowUpDown className="h-3 w-3 text-muted-foreground shrink-0" />
+                <select
+                  aria-label="ترتيب الأرشيف"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as ArchiveSortOrder)}
+                  className="bg-transparent text-[11px] font-black text-foreground outline-hidden cursor-pointer"
+                >
+                  <option value="date-desc">الأحدث تاريخاً</option>
+                  <option value="date-asc">الأقدم تاريخاً</option>
+                  <option value="amount-desc">الأعلى قيمة</option>
+                </select>
+              </div>
+            </div>
+
+            <span className="text-[11px] font-bold text-muted-foreground">
+              النتائج:{" "}
+              <bdi dir="ltr" className="font-mono font-black text-foreground tabular-nums">
+                {formatNumber(sortedRecords.length)}
+              </bdi>
+            </span>
+          </div>
+
+          {/* شبكة بطاقات الفواتير مع DOM ثابت خفيف */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1 min-w-0">
+            {sortedRecords.length === 0 ? (
+              <InvoicesEmptyState />
+            ) : (
+              pageItems.map((item) => (
+                <InvoiceRecordCard
+                  key={`${item.kind}-${item.id}`}
+                  item={item}
+                  onPreviewCustom={setPreviewCustomInvoice}
+                  onPreviewCalc={setPreviewCalcInvoice}
+                  onPreviewProforma={setPreviewProformaInvoice}
+                  onEditCustom={setEditingCustomInvoice}
+                  onEditProforma={setEditingProformaInvoice}
+                />
+              ))
+            )}
+          </div>
         </div>
 
-        {/* زر عرض المزيد إذا كان هناك سجلات إضافية في الأرشيف */}
-        {filteredRecords.length > visibleCount && (
-          <div className="flex flex-col items-center justify-center pt-2 pb-1">
-            <button
-              type="button"
-              onClick={() => setVisibleCount((prev) => prev + 40)}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 transition-all cursor-pointer active:scale-95"
-            >
-              عرض المزيد من الفواتير ({filteredRecords.length - visibleCount} فاتورة إضافية)
-            </button>
-          </div>
-        )}
+        <InvoicePaginationBar
+          page={safePage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalCount={sortedRecords.length}
+          onPageChange={handlePageChange}
+          onPageSizeChange={(nextSize) => setPageSize(nextSize)}
+        />
       </div>
 
       {/* 4. مدير النوافذ المنبثقة والمعاينة والطباعة */}

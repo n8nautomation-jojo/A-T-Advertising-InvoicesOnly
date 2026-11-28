@@ -214,7 +214,7 @@ export function BankStatementView({
 
   return (
     <div
-      className="w-full max-w-full min-w-0 space-y-3"
+      className="w-full max-w-full min-w-0 space-y-3 flex-1 flex flex-col"
       dir="rtl"
       data-testid={`bank-statement-view-${currency}`}
     >
@@ -467,7 +467,7 @@ export function BankStatementView({
           <span className="text-xs font-bold">جارٍ تحميل كشف الحساب…</span>
         </div>
       ) : filteredItems.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-white/70 dark:bg-card/50 py-7 px-4 text-center space-y-1.5">
+        <div className="rounded-xl border border-dashed border-border bg-white/70 dark:bg-card/50 py-7 px-4 text-center space-y-1.5 flex-1 flex flex-col items-center justify-center min-h-[200px]">
           <FileSpreadsheet className="h-7 w-7 mx-auto text-muted-foreground/45" />
           <p className="text-xs font-black text-foreground">
             لا توجد معاملات بنكية مسجلة في هذه الفترة {isAllMode ? "" : `بعملة ${curName}`}
@@ -479,7 +479,7 @@ export function BankStatementView({
       ) : (
         <div
           data-testid="bank-statement-transactions-list"
-          className="max-h-[38vh] sm:max-h-[42vh] overflow-y-auto overscroll-y-contain rounded-xl border border-border/60 bg-slate-50/70 dark:bg-muted/20 p-2 space-y-1.5 w-full min-w-0"
+          className="rounded-xl border border-border/60 bg-slate-50/70 dark:bg-muted/20 p-2 space-y-2 w-full min-w-0 flex-1"
         >
           {filteredItems.map((item) => (
             <StatementTransactionCard

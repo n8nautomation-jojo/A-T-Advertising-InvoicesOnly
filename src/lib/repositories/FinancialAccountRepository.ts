@@ -285,7 +285,22 @@ export async function reconcileBankAccountBalance(
       // ignore if table absent
     }
 
-    const previousBalance = round2(report.balance - unpaidPurchases);
+    // Sum all active accounts in the same currency so reconciliation matches
+    // BankStatementView & bankTreasuryStore 100% even on upgraded legacy DBs
+    // with multiple active accounts (e.g. acc-cash + acc-bank-1 in SDG).
+    const allCurrencyReports = (await getAccountBalances()).filter(
+      (r) => sanitizeCurrency(r.account.currency, "SDG") === currency
+    );
+    const currencyLedgerBalance =
+      allCurrencyReports.length > 0
+        ? round2(allCurrencyReports.reduce((s, r) => s + r.balance, 0))
+        : report.balance;
+    const currencyOpeningSum =
+      allCurrencyReports.length > 0
+        ? round2(allCurrencyReports.reduce((s, r) => s + (r.account.openingBalance || 0), 0))
+        : report.account.openingBalance;
+
+    const previousBalance = round2(currencyLedgerBalance - unpaidPurchases);
     const delta = round2(actualBalance - previousBalance);
 
     if (Math.abs(delta) < 0.005) {
@@ -301,13 +316,18 @@ export async function reconcileBankAccountBalance(
     }
 
     const txCountRes = await db.query(
-      "SELECT COUNT(*) AS c FROM financial_transactions WHERE account_id = ? AND (reversed_by IS NULL OR reversed_by = '')",
-      [input.accountId]
+      `SELECT COUNT(*) AS c
+         FROM financial_transactions t
+         JOIN financial_accounts a ON a.id = t.account_id
+        WHERE a.is_active = 1
+          AND COALESCE(t.currency, a.currency, 'SDG') = ?
+          AND (t.reversed_by IS NULL OR t.reversed_by = '')`,
+      [currency]
     );
     const hasPriorMovements = (Number(txCountRes.values?.[0]?.c) || 0) > 0;
     const isInitialSetup =
       !hasPriorMovements &&
-      Math.abs(report.account.openingBalance) < 0.005 &&
+      Math.abs(currencyOpeningSum) < 0.005 &&
       unpaidPurchases < 0.005;
 
     const sourceType: "opening_balance" | "bank_reconciliation" = isInitialSetup

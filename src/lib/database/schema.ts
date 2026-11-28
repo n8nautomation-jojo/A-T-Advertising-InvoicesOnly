@@ -11,7 +11,7 @@ export const DB_NAME = "ta_invoicing_db";
  * الإصدار المنطقي للمخطط — يطابق آخر ترحيل في `migrations/index.ts`
  * (v8: نموذج الأعمال + الترقيم + التسويات + إدارة العملاء + المحاسبة متعددة العملات + الخطابات الرسمية + الحسابات البنكية الأربعة المعيارية).
  */
-export const DB_VERSION = 9;
+export const DB_VERSION = 10;
 
 /**
  * Complete DDL for version 1.
@@ -465,6 +465,10 @@ export const CREATE_SCHEMA_V2_COLUMN_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_custom_invoices_supplier ON custom_invoices(supplier_id)`,
   `CREATE INDEX IF NOT EXISTS idx_custom_invoices_type_cancelled ON custom_invoices(type, cancelled_at)`,
   `CREATE INDEX IF NOT EXISTS idx_custom_invoices_type_cancelled_date ON custom_invoices(type, cancelled_at, date DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_custom_invoices_active_date_created ON custom_invoices(cancelled_at, date DESC, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_custom_invoices_currency_active_date ON custom_invoices(currency, cancelled_at, date DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_custom_invoices_customer_active_date ON custom_invoices(customer_id, cancelled_at, date DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_custom_invoices_party_name ON custom_invoices(party_name)`,
   `CREATE INDEX IF NOT EXISTS idx_cpa_invoice_amount ON customer_payment_allocations(invoice_id, amount)`,
   `CREATE INDEX IF NOT EXISTS idx_spa_invoice_amount ON supplier_payment_allocations(invoice_id, amount)`,
   `CREATE INDEX IF NOT EXISTS idx_customer_payments_active_date ON customer_payments(cancelled_at, paid_at DESC)`,

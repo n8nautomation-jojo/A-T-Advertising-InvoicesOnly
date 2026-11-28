@@ -124,9 +124,9 @@ export function BankAccountsPage({
       <main
         dir="rtl"
         data-testid="bank-accounts-page"
-        className="w-full flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-36 md:pb-16"
+        className="w-full flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-3 py-3 md:px-6 md:py-5 min-w-0 pb-4 md:pb-8 flex flex-col"
       >
-        <div className="mx-auto max-w-4xl w-full min-w-0 space-y-3.5">
+        <div className="mx-auto max-w-4xl w-full min-w-0 space-y-3.5 flex-1 flex flex-col">
           {/* Top Crimson-Accented Banking Header: Enlarged prominent title, single Back button, no subtitle, no "كل الحسابات" */}
           <header className="bg-gradient-to-l from-[#B71C1C] to-[#D32F2F] text-white px-4 py-3.5 sm:px-5 sm:py-4 rounded-2xl shadow-sm w-full min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-2.5 min-w-0">

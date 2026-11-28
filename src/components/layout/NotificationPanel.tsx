@@ -14,11 +14,12 @@ export interface AppNotificationItem {
 
 interface NotificationPanelProps {
   alerts: AppNotificationItem[];
+  unreadCount?: number;
   onClose: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
-export function NotificationPanel({ alerts, onClose, triggerRef }: NotificationPanelProps) {
+export function NotificationPanel({ alerts, unreadCount = 0, onClose, triggerRef }: NotificationPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -63,18 +64,22 @@ export function NotificationPanel({ alerts, onClose, triggerRef }: NotificationP
           <span
             className={[
               "rounded-full px-2 py-0.5 text-[10px] font-black",
-              urgentCount > 0
+              alerts.length === 0
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : unreadCount === 0
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : urgentCount > 0
                 ? "bg-destructive/10 text-destructive"
-                : alerts.length > 0
-                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+                : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
             ].join(" ")}
           >
-            {urgentCount > 0
+            {alerts.length === 0
+              ? "كل شيء بخير ✓"
+              : unreadCount === 0
+              ? `تمت القراءة (${alerts.length}) ✓`
+              : urgentCount > 0
               ? `${urgentCount} متأخر`
-              : alerts.length > 0
-              ? `${alerts.length} للمتابعة`
-              : "كل شيء بخير ✓"}
+              : `${alerts.length} للمتابعة`}
           </span>
         </div>
         <button

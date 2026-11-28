@@ -13,13 +13,17 @@ import { UnifiedInvoiceRecord, InvoicesStats } from "./types";
  * 3. الفواتير المبدئية الرسمية المعتمدة (Proforma Invoices A4)
  * يتولى الدمج، الترتيب الزمني، البحث، وحساب المؤشرات المالية
  */
-export function useUnifiedInvoices(searchQuery: string = "", activeFilter: string = "all") {
+export function useUnifiedInvoices(
+  searchQuery: string = "",
+  activeFilter: string = "all",
+  currencyFilter: string = "ALL"
+) {
   const calcInvoices = useInvoices();
   const customInvoices = useCustomInvoices();
   const proformaInvoices = useProformaInvoices();
 
-  // 1. دمج وترتيب كافة الفواتير من المصادر الثلاثة
-  const allRecords = useMemo<UnifiedInvoiceRecord[]>(() => {
+  // 1. دمج وترتيب كافة الفواتير من المصادر الثلاثة مع بناء فهرس بحث خفيف O(1) لكل سجل
+  const { allRecords, searchIndexByKey, countsByType } = useMemo(() => {
     const list: UnifiedInvoiceRecord[] = [];
 
     // بناء فهرس سريع لأرقام العروض المبدئية O(1) لتجنب الفحص الخطي O(N*M)
@@ -95,42 +99,59 @@ export function useUnifiedInvoices(searchQuery: string = "", activeFilter: strin
       });
     });
 
-    // د. إزالة أي تكرار ناتج عن حفظ متكرر (بالاعتماد على id وليس serial لأن المرجع قد لا يكون مسنداً للأنواع الفرعية)
+    // د. إزالة أي تكرار ناتج عن حفظ متكرر وبناء عدادات الأنواع وفهرس البحث في مرور واحد O(N)
     const seenKeys = new Set<string>();
     const uniqueList: UnifiedInvoiceRecord[] = [];
+    const indexMap = new Map<string, string>();
+    const counts = { all: 0, sales: 0, purchase: 0, proforma: 0, calculator: 0 };
 
     for (const rec of list) {
       const uniqueKey = `${rec.kind}-${rec.id}`;
       if (!seenKeys.has(uniqueKey)) {
         seenKeys.add(uniqueKey);
         uniqueList.push(rec);
+        indexMap.set(
+          uniqueKey,
+          `${rec.serial || ""} ${rec.customerName || ""} ${rec.typeLabel || ""} ${rec.date || ""} ${rec.currency || ""}`.toLowerCase()
+        );
+        counts.all += 1;
+        if (rec.type === "sales") counts.sales += 1;
+        else if (rec.type === "purchase") counts.purchase += 1;
+        else if (rec.type === "proforma") counts.proforma += 1;
+        else if (rec.type === "calculator") counts.calculator += 1;
       }
     }
 
     // الترتيب من الأحدث للأقدم عددياً وتاريخياً
-    return uniqueList.sort((a, b) => {
+    uniqueList.sort((a, b) => {
       const dateCompare = (b.date || "").localeCompare(a.date || "");
       if (dateCompare !== 0) return dateCompare;
       return b.serial.localeCompare(a.serial, undefined, { numeric: true });
     });
+
+    return { allRecords: uniqueList, searchIndexByKey: indexMap, countsByType: counts };
   }, [calcInvoices, customInvoices, proformaInvoices]);
 
-  // 2. تصفية السجلات بناءً على نص البحث وتبويب الفرز
+  // 2. تصفية السجلات بناءً على نص البحث وتبويب الفرز والعملة
   const filteredRecords = useMemo(() => {
     const q = (searchQuery || "").trim().toLowerCase();
     const filter = activeFilter || "all";
+    const curFilter = currencyFilter || "ALL";
+
+    if (!q && filter === "all" && curFilter === "ALL") {
+      return allRecords;
+    }
+
     return allRecords.filter((rec) => {
-      const matchSearch =
-        !q ||
-        (rec.serial || "").toLowerCase().includes(q) ||
-        (rec.customerName || "").toLowerCase().includes(q) ||
-        (rec.typeLabel || "").toLowerCase().includes(q);
-
-      const matchType = filter === "all" || rec.type === filter;
-
-      return matchSearch && matchType;
+      if (filter !== "all" && rec.type !== filter) return false;
+      if (curFilter !== "ALL" && rec.currency !== curFilter) return false;
+      if (q) {
+        const blob = searchIndexByKey.get(`${rec.kind}-${rec.id}`) ?? "";
+        if (!blob.includes(q)) return false;
+      }
+      return true;
     });
-  }, [allRecords, searchQuery, activeFilter]);
+  }, [allRecords, searchIndexByKey, searchQuery, activeFilter, currencyFilter]);
 
   // 3. المؤشرات والإحصائيات السريعة المحدثة
   const stats = useMemo<InvoicesStats>(() => {
@@ -153,5 +174,6 @@ export function useUnifiedInvoices(searchQuery: string = "", activeFilter: strin
     allRecords,
     filteredRecords,
     stats,
+    countsByType,
   };
 }

@@ -104,8 +104,10 @@ export function CustomerDetailPage({
   const deferredInvoiceSearch = useDeferredValue(invoiceSearch);
   const [invoiceSort, setInvoiceSort] = useState<InvoiceSortKey>("date-desc");
   const [invoicePage, setInvoicePage] = useState(1);
-  const [invoicePageSize, setInvoicePageSize] = useState(20);
-  const [invoiceViewMode, setInvoiceViewMode] = useState<"table" | "cards">("table");
+  const [invoicePageSize, setInvoicePageSize] = useState(25);
+  const [invoiceViewMode, setInvoiceViewMode] = useState<"table" | "cards">(() =>
+    typeof window !== "undefined" && window.innerWidth < 768 ? "cards" : "table"
+  );
 
   const [statementSearch, setStatementSearch] = useState("");
   const deferredStatementSearch = useDeferredValue(statementSearch);

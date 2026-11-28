@@ -12,6 +12,13 @@ import { formatNumber } from "@/lib/printCalculator";
 import { sanitizeCurrency } from "@/lib/currency/types";
 import { getCurrencyShortLabel } from "@/lib/currency/currencyFormat";
 import { triggerOpenTour } from "@/lib/appTourStore";
+import {
+  dispatchNativeNotificationsForUnread,
+  ensureNativeNotificationPermission,
+  getReadAlertsMap,
+  getUnreadAlerts,
+  markAlertsAsRead,
+} from "@/lib/notifications/nativeNotifications";
 import { getTourSectionFromPath } from "./navConfig";
 import { NotificationPanel, type AppNotificationItem } from "./NotificationPanel";
 
@@ -31,6 +38,7 @@ export function AppHeader() {
   const settlementVersion = useSettlementVersion();
   const [unpaidExpenses, setUnpaidExpenses] = useState<ExpenseWithSettlement[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [readMap, setReadMap] = useState<Record<string, string>>(() => getReadAlertsMap());
   const [today, setToday] = useState("");
   const bellTriggerRef = useRef<HTMLButtonElement>(null);
 
@@ -111,10 +119,47 @@ export function AppHeader() {
     return list.slice(0, 20);
   }, [invoices, unpaidExpenses, settlementVersion]);
 
+  const unreadAlerts = useMemo(() => getUnreadAlerts(alerts, readMap), [alerts, readMap]);
+
+  // Keep read state synced across components and when user taps a native Android notification
+  useEffect(() => {
+    const syncRead = () => setReadMap(getReadAlertsMap());
+    const handleNativeOpened = () => {
+      setReadMap(markAlertsAsRead(alerts));
+    };
+    window.addEventListener("ta-notifications-read-changed", syncRead);
+    window.addEventListener("ta-native-notification-opened", handleNativeOpened);
+    return () => {
+      window.removeEventListener("ta-notifications-read-changed", syncRead);
+      window.removeEventListener("ta-native-notification-opened", handleNativeOpened);
+    };
+  }, [alerts]);
+
+  // Push real native Android system notifications for any newly arrived unread alerts
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || unreadAlerts.length === 0) return;
+    void dispatchNativeNotificationsForUnread(unreadAlerts);
+  }, [unreadAlerts]);
+
+  const handleToggleNotifications = useCallback(() => {
+    setShowNotifications((prev) => {
+      const next = !prev;
+      if (next) {
+        if (alerts.length > 0) {
+          setReadMap(markAlertsAsRead(alerts));
+        }
+        if (Capacitor.isNativePlatform()) {
+          void ensureNativeNotificationPermission(true);
+        }
+      }
+      return next;
+    });
+  }, [alerts]);
+
   const isDark = theme === "dark";
-  const urgentCount = alerts.filter((a) => a.severity === "urgent").length;
-  const badgeCount = urgentCount > 0 ? urgentCount : alerts.length;
-  const hasUrgent = badgeCount > 0;
+  const unreadUrgentCount = unreadAlerts.filter((a) => a.severity === "urgent").length;
+  const badgeCount = unreadAlerts.length;
+  const hasUnread = badgeCount > 0;
 
   return (
     <header
@@ -228,26 +273,28 @@ export function AppHeader() {
             <button
               ref={bellTriggerRef}
               type="button"
-              onClick={() => setShowNotifications((v) => !v)}
-              aria-label={`التنبيهات${hasUrgent ? ` — ${badgeCount} تنبيه` : ""}`}
+              data-testid="header-notifications-btn"
+              onClick={handleToggleNotifications}
+              aria-label={`التنبيهات${hasUnread ? ` — ${badgeCount} تنبيه غير مقروء` : ""}`}
               aria-expanded={showNotifications}
               title="التنبيهات"
               className={[
                 "relative grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl sm:rounded-2xl border btn-tactile interactive shadow-2xs active:scale-[0.94] transition-transform duration-100",
-                urgentCount > 0
+                unreadUrgentCount > 0
                   ? "border-destructive/30 bg-destructive/8 text-destructive"
-                  : hasUrgent
+                  : hasUnread
                   ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
                   : "border-border/60 bg-secondary/50 text-foreground hover:bg-card hover:border-primary/30",
               ].join(" ")}
             >
               <Bell className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
-              {hasUrgent && (
+              {hasUnread && (
                 <span
+                  data-testid="header-notifications-badge"
                   aria-hidden="true"
                   className={[
-                    "absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-black text-white ring-2 ring-background",
-                    urgentCount > 0 ? "bg-destructive" : "bg-amber-500",
+                    "absolute -top-1 -right-1 flex h-4 min-w-4 px-0.5 items-center justify-center rounded-full text-[8px] font-black text-white ring-2 ring-background",
+                    unreadUrgentCount > 0 ? "bg-destructive" : "bg-amber-500",
                   ].join(" ")}
                 >
                   {badgeCount}
@@ -258,6 +305,7 @@ export function AppHeader() {
             {showNotifications && (
               <NotificationPanel
                 alerts={alerts}
+                unreadCount={badgeCount}
                 onClose={handleCloseNotifications}
                 triggerRef={bellTriggerRef}
               />

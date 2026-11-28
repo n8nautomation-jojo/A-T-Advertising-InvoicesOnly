@@ -169,7 +169,7 @@ describe("Bi-Directional Scroll & Touch Usability Architecture (CTO Governance S
     expect(offenders).toEqual([]);
   });
 
-  it("allows unobstructed vertical + horizontal scrolling and progressive chunking in BillingArchiveTable with 120 accumulated invoices", () => {
+  it("allows unobstructed vertical + horizontal scrolling, constant-DOM pagination, and responsive cards view in BillingArchiveTable with 120 invoices", () => {
     render(
       <BillingArchiveTable
         onEditCustom={vi.fn()}
@@ -186,23 +186,23 @@ describe("Bi-Directional Scroll & Touch Usability Architecture (CTO Governance S
     // Verify O(1) normalized Arabic customer name matching ("أحمد كمال" -> "احمد كمال")
     expect(screen.getByTitle("ربط هذه الفاتورة بملف احمد كمال")).toBeInTheDocument();
 
-    // Verify progressive chunking renders 50 rows initially out of 120
-    const initialRows = scrollBox.querySelectorAll("tbody tr");
-    expect(initialRows.length).toBe(50);
+    // Verify constant-DOM pagination renders 50 rows on page 1 out of 120 (3 pages)
+    expect(scrollBox.querySelectorAll("tbody tr").length).toBe(50);
 
-    const loadMoreBtn = screen.getByText(/عرض المزيد من الفواتير \(70 فاتورة إضافية\)/);
-    fireEvent.click(loadMoreBtn);
-    expect(scrollBox.querySelectorAll("tbody tr").length).toBe(100);
+    fireEvent.click(screen.getByTestId("pagination-next"));
+    expect(scrollBox.querySelectorAll("tbody tr").length).toBe(50);
 
-    const loadMoreBtn2 = screen.getByText(/عرض المزيد من الفواتير \(20 فاتورة إضافية\)/);
-    fireEvent.click(loadMoreBtn2);
-    expect(scrollBox.querySelectorAll("tbody tr").length).toBe(120);
-    expect(screen.queryByText(/عرض المزيد من الفواتير/)).toBeNull();
+    fireEvent.click(screen.getByTestId("pagination-last"));
+    expect(scrollBox.querySelectorAll("tbody tr").length).toBe(20);
 
-    // Filtering resets visible chunk cleanly
+    // Switching to executive Cards view renders 20 cards on page 3 without table scroll trap
+    fireEvent.click(screen.getByTestId("billing-view-cards-btn"));
+    expect(screen.getAllByTestId("billing-invoice-card").length).toBe(20);
+
+    // Filtering resets back to page 1 cleanly
     const proformaTab = screen.getByText("فواتير مبدئية");
     fireEvent.click(proformaTab);
-    expect(scrollBox.querySelectorAll("tbody tr").length).toBe(24);
+    expect(screen.getAllByTestId("billing-invoice-card").length).toBe(24);
   });
 
   it("renders CustomerDetailStatementTab without vertical clip traps in both single-currency and multi-currency views", () => {

@@ -113,8 +113,9 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Enable full offscreen WebView drawing for exact native vector PDF export.
         WebView.enableSlowWholeDocumentDraw();
-        // Native backup engine must be registered before the bridge is created.
+        // Native backup engine and native notifications must be registered before the bridge is created.
         registerPlugin(BackupPlugin.class);
+        registerPlugin(NativeNotificationsPlugin.class);
         super.onCreate(savedInstanceState);
 
         Bridge bridge = getBridge();
@@ -587,6 +588,27 @@ public class MainActivity extends BridgeActivity {
                     } catch (Exception ignored) {}
                 }
             }, "AndroidPrint");
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent == null) return;
+        String route = intent.getStringExtra(NativeNotificationsPlugin.EXTRA_NOTIFICATION_ROUTE);
+        if (route != null && !route.trim().isEmpty()) {
+            final String safeRoute = route.startsWith("/") ? route : ("/" + route);
+            runOnUiThread(() -> {
+                try {
+                    WebView bridgeWebView = getBridge() != null ? getBridge().getWebView() : null;
+                    if (bridgeWebView != null) {
+                        bridgeWebView.evaluateJavascript(
+                            "window.location.hash = " + jsQuote("#" + safeRoute) + "; window.dispatchEvent(new Event('ta-native-notification-opened'));",
+                            null
+                        );
+                    }
+                } catch (Exception ignored) {}
+            });
         }
     }
 

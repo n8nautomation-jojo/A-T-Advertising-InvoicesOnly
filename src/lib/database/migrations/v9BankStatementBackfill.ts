@@ -46,10 +46,10 @@ async function tableExists(db: MigrationDatabase, table: string): Promise<boolea
 
 async function buildAccountByCurrencyMap(db: MigrationDatabase): Promise<{
   byCurrency: Map<AppCurrency, string>;
-  accountCurrency: Map<string, AppCurrency>;
+  activeAccountCurrency: Map<string, AppCurrency>;
 }> {
   const byCurrency = new Map<AppCurrency, string>();
-  const accountCurrency = new Map<string, AppCurrency>();
+  const activeAccountCurrency = new Map<string, AppCurrency>();
   try {
     const res = await db.query(
       "SELECT id, COALESCE(currency, 'SDG') AS currency, is_active FROM financial_accounts ORDER BY is_active DESC, created_at ASC"
@@ -57,24 +57,27 @@ async function buildAccountByCurrencyMap(db: MigrationDatabase): Promise<{
     for (const row of res?.values ?? []) {
       const id = String(row.id);
       const cur = sanitizeCurrency(row.currency, "SDG");
-      accountCurrency.set(id, cur);
-      if (Number(row.is_active ?? 1) === 1 && !byCurrency.has(cur)) {
-        byCurrency.set(cur, id);
+      const isActive = Number(row.is_active ?? 1) === 1;
+      if (isActive) {
+        activeAccountCurrency.set(id, cur);
+        if (!byCurrency.has(cur)) {
+          byCurrency.set(cur, id);
+        }
       }
     }
   } catch {
     // ignore if table absent
   }
-  return { byCurrency, accountCurrency };
+  return { byCurrency, activeAccountCurrency };
 }
 
 function resolveAccountForRow(
   preferredAccountId: unknown,
   currency: AppCurrency,
-  maps: { byCurrency: Map<AppCurrency, string>; accountCurrency: Map<string, AppCurrency> }
+  maps: { byCurrency: Map<AppCurrency, string>; activeAccountCurrency: Map<string, AppCurrency> }
 ): string | null {
   const prefId = preferredAccountId ? String(preferredAccountId).trim() : "";
-  if (prefId && maps.accountCurrency.get(prefId) === currency) {
+  if (prefId && maps.activeAccountCurrency.get(prefId) === currency) {
     return prefId;
   }
   return maps.byCurrency.get(currency) ?? null;

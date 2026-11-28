@@ -124,7 +124,7 @@ export function CustomerDetailInvoicesTab({
               onChange={(e) => setInvoicePageSize(Number(e.target.value))}
               className="bg-transparent text-xs font-bold text-foreground border-none outline-hidden cursor-pointer"
             >
-              <option value={20}>20</option>
+              <option value={25}>25</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
             </select>
@@ -319,15 +319,15 @@ export function CustomerDetailInvoicesTab({
                           {inv.statusLabel}
                         </span>
                       </td>
-                      <td className="py-2.5 px-2 sm:px-3.5 text-center font-sans">
-                        <div className="flex flex-wrap sm:flex-nowrap items-center justify-center gap-0.5 sm:gap-1.5">
+                      <td className="py-2.5 px-2 sm:px-3.5 text-center font-sans whitespace-nowrap">
+                        <div className="flex flex-nowrap items-center justify-center gap-1 whitespace-nowrap">
                           {cleanRem > 0 && (
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
                               onClick={() => onCollectInvoice(inv.id)}
-                              className="h-7 px-2 sm:px-2.5 rounded-lg text-[11px] sm:text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer"
+                              className="h-7 shrink-0 px-2 sm:px-2.5 rounded-lg text-[11px] sm:text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer whitespace-nowrap"
                               title="تحصيل دفعة لهذه الفاتورة"
                             >
                               تحصيل
@@ -339,7 +339,7 @@ export function CustomerDetailInvoicesTab({
                               size="sm"
                               variant="ghost"
                               onClick={() => onPreviewInvoice(inv.id)}
-                              className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
+                              className="h-7 w-7 shrink-0 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
                               title="معاينة الفاتورة"
                               aria-label="معاينة الفاتورة"
                             >
@@ -352,7 +352,7 @@ export function CustomerDetailInvoicesTab({
                               size="sm"
                               variant="ghost"
                               onClick={() => onEditInvoice(inv.id)}
-                              className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-blue-600 cursor-pointer"
+                              className="h-7 w-7 shrink-0 p-0 rounded-lg text-muted-foreground hover:text-blue-600 cursor-pointer"
                               title="تعديل الفاتورة"
                               aria-label="تعديل الفاتورة"
                             >
@@ -364,7 +364,7 @@ export function CustomerDetailInvoicesTab({
                             size="sm"
                             variant="ghost"
                             onClick={() => onPrintInvoice(inv.id)}
-                            className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
+                            className="h-7 w-7 shrink-0 p-0 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
                             title="طباعة الفاتورة"
                           >
                             <Printer className="h-3.5 w-3.5" />
@@ -374,7 +374,7 @@ export function CustomerDetailInvoicesTab({
                             size="sm"
                             variant="ghost"
                             onClick={() => onShareInvoice(inv.id)}
-                            className="h-7 w-7 p-0 rounded-lg text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
+                            className="h-7 w-7 shrink-0 p-0 rounded-lg text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
                             title="مشاركة الفاتورة عبر واتساب"
                           >
                             <Share2 className="h-3.5 w-3.5" />
@@ -389,55 +389,67 @@ export function CustomerDetailInvoicesTab({
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full min-w-0">
+        <div
+          data-testid="customer-invoices-cards-grid"
+          className="grid grid-cols-1 md:grid-cols-2 gap-2.5 w-full min-w-0"
+        >
           {paginatedInvoices.map((inv) => {
             const cleanTotal = Math.abs(Number(inv.totalAmount) || 0) < 0.005 ? 0 : Number(inv.totalAmount) || 0;
             const cleanRem = Math.abs(Number(inv.remainingAmount) || 0) < 0.005 ? 0 : Number(inv.remainingAmount) || 0;
+            const accentBorder =
+              cleanRem <= 0
+                ? "border-r-emerald-600"
+                : inv.status === "overdue"
+                ? "border-r-rose-600"
+                : inv.status === "partial"
+                ? "border-r-amber-500"
+                : "border-r-primary";
             return (
               <div
                 key={inv.id}
-                className="rounded-2xl border border-border/70 bg-card hover:bg-secondary/30 transition-all p-3.5 sm:p-4 space-y-3 shadow-2xs w-full min-w-0"
+                data-testid="customer-invoice-card"
+                className={`rounded-2xl border border-border/75 border-r-[3.5px] ${accentBorder} bg-card hover:border-primary/40 transition-all p-3 space-y-2 shadow-2xs w-full min-w-0`}
               >
-                <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border/40 pb-2.5 min-w-0">
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <bdi dir="ltr" className="font-mono font-black text-sm text-primary tabular-nums">
-                        {inv.reference || `#${inv.serial}`}
-                      </bdi>
+                <div className="flex items-center justify-between gap-2 border-b border-border/45 pb-1.5 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                    <bdi dir="ltr" className="font-mono font-black text-xs sm:text-sm text-primary tabular-nums">
+                      {inv.reference || `#${inv.serial}`}
+                    </bdi>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[9.5px] font-black border ${inv.statusBadgeColor}`}
+                    >
+                      {inv.statusLabel}
+                    </span>
+                  </div>
+                  <div className="text-left text-[10px] text-muted-foreground font-mono shrink-0">
+                    <bdi dir="ltr" className="tabular-nums font-bold">{inv.date}</bdi>
+                    {inv.dueDate && (
                       <span
-                        className={`rounded-full px-2.5 py-0.5 text-[9.5px] font-black border ${inv.statusBadgeColor}`}
+                        className={`block text-[9.5px] font-sans ${
+                          inv.status === "overdue" ? "text-rose-600 font-bold" : "text-muted-foreground/80"
+                        }`}
                       >
-                        {inv.statusLabel}
+                        استحقاق: <bdi dir="ltr" className="font-mono">{inv.dueDate}</bdi>
                       </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                      <span>
-                        التاريخ: <bdi dir="ltr" className="font-mono">{inv.date}</bdi>
-                      </span>
-                      {inv.dueDate && (
-                        <span className={inv.status === "overdue" ? "text-rose-600 font-bold" : ""}>
-                          الاستحقاق: <bdi dir="ltr" className="font-mono">{inv.dueDate}</bdi>
-                        </span>
-                      )}
-                    </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs min-w-0">
-                  <div className="rounded-xl border border-border/60 bg-secondary/30 p-2.5 min-w-0">
+                  <div className="rounded-xl border border-border/55 bg-secondary/25 px-2.5 py-2 min-w-0">
                     <span className="text-[10px] text-muted-foreground font-bold block">إجمالي الفاتورة</span>
                     <p className="font-mono text-xs sm:text-sm font-black text-foreground tabular-nums break-words mt-0.5">
                       <bdi dir="ltr">{formatNumber(cleanTotal)}</bdi>{" "}
-                      <bdi dir="ltr" className="text-[11px]">{inv.currency}</bdi>
+                      <bdi dir="ltr" className="text-[10px] text-muted-foreground">{inv.currency}</bdi>
                     </p>
                   </div>
-                  <div className="rounded-xl border border-border/60 bg-secondary/30 p-2.5 min-w-0">
+                  <div className="rounded-xl border border-border/55 bg-secondary/25 px-2.5 py-2 min-w-0">
                     <span className="text-[10px] text-muted-foreground font-bold block">المتبقي المطلوب</span>
                     <p className="font-mono text-xs sm:text-sm font-black tabular-nums break-words mt-0.5">
                       {cleanRem > 0 ? (
                         <span className="text-rose-600 dark:text-rose-400">
                           <bdi dir="ltr">{formatNumber(cleanRem)}</bdi>{" "}
-                          <bdi dir="ltr" className="text-[11px]">{inv.currency}</bdi>
+                          <bdi dir="ltr" className="text-[10px]">{inv.currency}</bdi>
                         </span>
                       ) : (
                         <span className="text-emerald-600 font-sans font-bold">مسددة بالكامل</span>
@@ -446,22 +458,22 @@ export function CustomerDetailInvoicesTab({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40">
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/45">
                   {cleanRem > 0 ? (
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
                       onClick={() => onCollectInvoice(inv.id)}
-                      className="h-8 px-3 rounded-xl text-xs font-bold text-emerald-600 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 cursor-pointer active:scale-95"
+                      className="h-8 px-3 rounded-xl text-xs font-black text-emerald-700 dark:text-emerald-300 border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-600 hover:text-white cursor-pointer active:scale-95 whitespace-nowrap"
                     >
                       تحصيل دفعة
                     </Button>
                   ) : (
-                    <span className="text-xs text-muted-foreground font-medium">لا توجد مستحقات</span>
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold">مسددة بالكامل ✓</span>
                   )}
 
-                  <div className="flex flex-wrap items-center gap-1">
+                  <div className="flex flex-nowrap items-center gap-0.5 shrink-0">
                     {onPreviewInvoice && (
                       <Button
                         type="button"
